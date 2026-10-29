@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+env/
+
+# Django
+*.sqlite3
+media/
+staticfiles/
+static_build/
+.env
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Vercel / build artifacts
+.vercel/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# Safety net
+.env
+venv/
+.venv/
+node_modules/
+db.sqlite3
+media/
+staticfiles/
+static_build/
+dist/
+.vite/
+__pycache__/
+*.pyc
+.DS_Store
+*.log
+.env
+backend/.env
+.env
+venv/
+node_modules/
+db.sqlite3
+media/
+staticfiles/
+static_build/
+dist/
+__pycache__/
+*.pyc
+.DS_Store
