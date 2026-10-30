@@ -6,7 +6,7 @@ from .permissions import role_of
 
 
 # ─────────────────────────────────────────────────────────────
-# Constants used by UserSerializer.validate_avatar
+# Avatar validation constants
 # ─────────────────────────────────────────────────────────────
 MAX_AVATAR_BYTES = 2 * 1024 * 1024   # 2 MB
 ALLOWED_AVATAR_MIMES = {
@@ -15,14 +15,9 @@ ALLOWED_AVATAR_MIMES = {
 
 
 # ─────────────────────────────────────────────────────────────
-# Register
+# Register — admin-only, for manual account creation
 # ─────────────────────────────────────────────────────────────
 class RegisterSerializer(serializers.Serializer):
-    """Registration takes only: full name, password.
-
-    Access code is checked in the view (RegisterView), not here.
-    """
-
     full_name = serializers.CharField(max_length=150)
     password = serializers.CharField(write_only=True, min_length=8)
 
@@ -32,8 +27,7 @@ class RegisterSerializer(serializers.Serializer):
             raise serializers.ValidationError("Full name is too short.")
         if User.objects.filter(first_name__iexact=value).exists():
             raise serializers.ValidationError(
-                "A student with this full name already exists. "
-                "Add a middle name or initial to distinguish yourself."
+                "A student with this full name already exists."
             )
         return value
 
@@ -57,9 +51,15 @@ class RegisterSerializer(serializers.Serializer):
 
 # ─────────────────────────────────────────────────────────────
 # Current user (GET / PATCH /api/me/)
+#
+# Exposes both `role` (superuser-aware) and `membership_role`
+# (raw ClassMembership.role) so the frontend can distinguish
+# "admin" from "rep with extra powers" cleanly.
 # ─────────────────────────────────────────────────────────────
 class UserSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
+    membership_role = serializers.SerializerMethodField()
+    is_class_rep = serializers.SerializerMethodField()
     display_name = serializers.SerializerMethodField()
     avatar_url = serializers.SerializerMethodField()
 
@@ -67,10 +67,13 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             "id", "username", "display_name", "first_name", "last_name",
-            "email", "level", "role", "avatar", "avatar_url",
+            "email", "level", "role", "membership_role", "is_class_rep",
+            "avatar", "avatar_url", "reference_number", "phone_number",
         )
         read_only_fields = (
-            "id", "username", "role", "display_name", "avatar_url", "last_name",
+            "id", "username", "role", "membership_role", "is_class_rep",
+            "display_name", "avatar_url", "last_name",
+            "reference_number", "phone_number",
         )
         extra_kwargs = {
             "avatar": {"write_only": True, "required": False},
@@ -80,6 +83,14 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_role(self, obj):
         return role_of(obj)
+
+    def get_membership_role(self, obj):
+        m = getattr(obj, "membership", None)
+        return m.role if m else "student"
+
+    def get_is_class_rep(self, obj):
+        m = getattr(obj, "membership", None)
+        return bool(m and m.role == "rep")
 
     def get_display_name(self, obj):
         return obj.first_name or obj.username
@@ -93,7 +104,6 @@ class UserSerializer(serializers.ModelSerializer):
         value = " ".join(value.split()).strip()
         if len(value) < 2:
             raise serializers.ValidationError("Full name is too short.")
-
         qs = User.objects.filter(first_name__iexact=value)
         if self.instance is not None:
             qs = qs.exclude(pk=self.instance.pk)
@@ -121,6 +131,8 @@ class UserSerializer(serializers.ModelSerializer):
 # ─────────────────────────────────────────────────────────────
 class MemberListSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
+    membership_role = serializers.SerializerMethodField()
+    is_class_rep = serializers.SerializerMethodField()
     display_name = serializers.SerializerMethodField()
     avatar_url = serializers.SerializerMethodField()
     joined_at = serializers.SerializerMethodField()
@@ -131,12 +143,21 @@ class MemberListSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             "id", "username", "display_name", "first_name",
-            "email", "level", "role", "avatar_url",
-            "joined_at", "uploads_count", "pending_count",
+            "reference_number", "phone_number",
+            "email", "level", "role", "membership_role", "is_class_rep",
+            "avatar_url", "joined_at", "uploads_count", "pending_count",
         )
 
     def get_role(self, obj):
         return role_of(obj)
+
+    def get_membership_role(self, obj):
+        m = getattr(obj, "membership", None)
+        return m.role if m else "student"
+
+    def get_is_class_rep(self, obj):
+        m = getattr(obj, "membership", None)
+        return bool(m and m.role == "rep")
 
     def get_display_name(self, obj):
         return obj.first_name or obj.username

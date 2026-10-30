@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../api/client';
 import { announcementsApi, resourcesApi } from '../api/resources';
 import { useAuth } from '../context/AuthContext';
 import { listOffline } from '../offline/db';
@@ -24,20 +25,23 @@ export default function Dashboard() {
   const [ann, setAnn] = useState([]);
   const [recent, setRecent] = useState([]);
   const [offlineCount, setOfflineCount] = useState(0);
+  const [timetable, setTimetable] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
 
   useEffect(() => {
     (async () => {
       try {
-        const [a, r, o] = await Promise.all([
+        const [a, r, o, tt] = await Promise.all([
           announcementsApi.list(),
           resourcesApi.list(),
           listOffline().catch(() => []),
+          api.get('/attendance/timetable/').catch(() => ({ results: [] })),
         ]);
         setAnn(a.results || []);
         setRecent(r.results || []);
         setOfflineCount(o.length || 0);
+        setTimetable(tt.results || []);
       } catch (e) {
         setErr(e.message);
       } finally {
@@ -54,7 +58,6 @@ export default function Dashboard() {
     );
   }
 
-  // Derive course breakdown from loaded resources
   const courseMap = {};
   recent.forEach((r) => {
     if (!r.course_name) return;
@@ -74,6 +77,13 @@ export default function Dashboard() {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
 
+  // Today's classes from timetable
+  const jsDay = new Date().getDay();
+  const todayIdx = jsDay === 0 ? 6 : jsDay - 1;
+  const todaysClasses = timetable
+    .filter((e) => e.day_of_week === todayIdx)
+    .sort((a, b) => (a.start_time > b.start_time ? 1 : -1));
+
   return (
     <div className="animate-fade-up" style={{ display: 'grid', gap: 28 }}>
       <style>{`
@@ -83,9 +93,7 @@ export default function Dashboard() {
           grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
           align-items: start;
         }
-        @media (max-width: 900px) {
-          .dash-grid { grid-template-columns: 1fr; }
-        }
+        @media (max-width: 900px) { .dash-grid { grid-template-columns: 1fr; } }
         .dash-stats {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -103,187 +111,175 @@ export default function Dashboard() {
         }
       `}</style>
 
-      {/* ── Hero greeting ─────────────────────────────── */}
-      <header
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-end',
-          flexWrap: 'wrap',
-          gap: 16,
-        }}
-      >
+      {/* Hero */}
+      <header style={{
+        display: 'flex', justifyContent: 'space-between',
+        alignItems: 'flex-end', flexWrap: 'wrap', gap: 16,
+      }}>
         <div>
-          <p
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              color: 'var(--text-muted)',
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-              margin: 0,
-            }}
-          >
-            {today}
-          </p>
-          <h1
-            style={{
-              fontSize: 30,
-              marginTop: 6,
-              letterSpacing: '-0.025em',
-              lineHeight: 1.15,
-            }}
-          >
+          <p style={{
+            fontSize: 12, fontWeight: 600, color: 'var(--text-muted)',
+            textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0,
+          }}>{today}</p>
+          <h1 style={{
+            fontSize: 30, marginTop: 6,
+            letterSpacing: '-0.025em', lineHeight: 1.15,
+          }}>
             {greeting()}, {firstName}
           </h1>
-          <p
-            style={{
-              color: 'var(--text-muted)',
-              fontSize: 14,
-              marginTop: 6,
-            }}
-          >
+          <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 6 }}>
             {recent.length > 0
               ? `${recent.length} resource${recent.length === 1 ? '' : 's'} from across your courses, ready to explore.`
               : 'Be the first to add to your class library.'}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Link
-            to="/resources"
-            style={{
-              padding: '9px 16px',
-              borderRadius: 'var(--radius-sm)',
-              border: '1px solid var(--border-strong)',
-              background: '#fff',
-              color: 'var(--text)',
-              fontSize: 14,
-              fontWeight: 500,
-              textDecoration: 'none',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            🔍 Browse
-          </Link>
-          <Link
-            to="/upload"
-            className="btn-primary"
-            style={{
-              padding: '9px 16px',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: 14,
-              fontWeight: 500,
-              textDecoration: 'none',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
-          >
-            ＋ Upload
-          </Link>
+          <Link to="/resources" style={{
+            padding: '9px 16px', borderRadius: 'var(--radius-sm)',
+            border: '1px solid var(--border-strong)',
+            background: '#fff', color: 'var(--text)',
+            fontSize: 14, fontWeight: 500,
+            textDecoration: 'none',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>🔍 Browse</Link>
+          <Link to="/upload" className="btn-primary" style={{
+            padding: '9px 16px', borderRadius: 'var(--radius-sm)',
+            fontSize: 14, fontWeight: 500,
+            textDecoration: 'none',
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+          }}>＋ Upload</Link>
         </div>
       </header>
 
       {err && (
-        <div
-          style={{
-            padding: '10px 14px',
-            background: 'var(--danger-bg)',
-            color: 'var(--danger)',
-            borderRadius: 'var(--radius-sm)',
-            fontSize: 14,
-          }}
-        >
-          {err}
-        </div>
+        <div style={{
+          padding: '10px 14px', background: 'var(--danger-bg)',
+          color: 'var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 14,
+        }}>{err}</div>
       )}
 
-      {/* ── Pinned announcement banner ────────────────── */}
+      {/* Pinned banner */}
       {topPinned && (
-        <div
-          style={{
-            padding: '14px 18px',
-            background: 'linear-gradient(90deg, #fef3c7 0%, #fef9e7 100%)',
-            border: '1px solid #fde68a',
-            borderLeft: '4px solid #f59e0b',
-            borderRadius: 'var(--radius)',
-            display: 'flex',
-            gap: 12,
-            alignItems: 'flex-start',
-          }}
-        >
+        <div style={{
+          padding: '14px 18px',
+          background: 'linear-gradient(90deg, #fef3c7 0%, #fef9e7 100%)',
+          border: '1px solid #fde68a', borderLeft: '4px solid #f59e0b',
+          borderRadius: 'var(--radius)',
+          display: 'flex', gap: 12, alignItems: 'flex-start',
+        }}>
           <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>📌</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 600, fontSize: 14, color: '#92400e' }}>
               {topPinned.title}
             </div>
-            <div
-              style={{
-                fontSize: 13,
-                color: '#78350f',
-                marginTop: 2,
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-              }}
-            >
-              {topPinned.body}
-            </div>
+            <div style={{
+              fontSize: 13, color: '#78350f', marginTop: 2,
+              display: '-webkit-box',
+              WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+            }}>{topPinned.body}</div>
           </div>
-          <Link
-            to="/announcements"
-            style={{
-              fontSize: 12,
-              color: '#92400e',
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-              flexShrink: 0,
-            }}
-          >
-            View →
-          </Link>
+          <Link to="/announcements" style={{
+            fontSize: 12, color: '#92400e',
+            fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
+          }}>View →</Link>
         </div>
       )}
 
-      {/* ── Stats row ─────────────────────────────────── */}
+      {/* Stats row */}
       <div className="dash-stats">
         <StatCard
-          icon="📚"
-          label="Resources"
-          value={recent.length}
-          href="/resources"
-          accent="var(--brand)"
+          icon="📚" label="Resources" value={recent.length}
+          href="/resources" accent="var(--brand)"
         />
         <StatCard
-          icon="📣"
-          label="Announcements"
-          value={ann.length}
-          href="/announcements"
-          accent="#f59e0b"
+          icon="📣" label="Announcements" value={ann.length}
+          href="/announcements" accent="#f59e0b"
         />
         <StatCard
-          icon="📥"
-          label="Offline saved"
-          value={offlineCount}
-          href="/offline"
-          accent="var(--success)"
+          icon="📥" label="Offline saved" value={offlineCount}
+          href="/offline" accent="var(--success)"
         />
         {canManage && (
           <StatCard
-            icon="⏳"
-            label="Pending review"
-            value={pendingCount}
-            href="/manage"
-            accent="var(--warning)"
+            icon="⏳" label="Pending review" value={pendingCount}
+            href="/manage" accent="var(--warning)"
             highlight={pendingCount > 0}
           />
         )}
       </div>
 
-      {/* ── Two-column: main + sidebar ────────────────── */}
+      {/* Today's classes */}
+      <div className="card" style={{ padding: 16 }}>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between',
+          alignItems: 'center', marginBottom: 12,
+        }}>
+          <h3 style={{
+            fontSize: 11, textTransform: 'uppercase',
+            letterSpacing: '0.08em', color: 'var(--text-muted)',
+            fontWeight: 600, margin: 0,
+          }}>Today's classes</h3>
+          <Link to="/timetable" style={{ fontSize: 12, fontWeight: 500 }}>
+            {canManage ? 'Manage →' : 'Full week →'}
+          </Link>
+        </div>
+        {todaysClasses.length === 0 ? (
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
+            No classes scheduled today.
+            {canManage && (
+              <>
+                {' '}
+                <Link to="/timetable" style={{ color: 'var(--brand)', fontWeight: 500 }}>
+                  Add your weekly schedule
+                </Link>
+                {' '}so attendance opens automatically.
+              </>
+            )}
+          </p>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {todaysClasses.map((c) => (
+              <div key={c.id} style={{
+                display: 'flex', justifyContent: 'space-between',
+                alignItems: 'center', gap: 12,
+                padding: '10px 12px',
+                background: 'var(--slate-50)',
+                borderRadius: 'var(--radius-sm)',
+                flexWrap: 'wrap',
+              }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{
+                      fontSize: 13, fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                    }}>{c.course_code}</span>
+                    {c.course_title && (
+                      <span style={{ fontSize: 12, color: 'var(--slate-600)' }}>
+                        {c.course_title}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {c.start_time} – {c.end_time}
+                    {c.room && ` · ${c.room}`}
+                    {c.lecturer && ` · ${c.lecturer}`}
+                  </div>
+                </div>
+                <Link to="/attendance" style={{
+                  padding: '5px 12px', fontSize: 11, fontWeight: 600,
+                  borderRadius: 'var(--radius-pill)',
+                  background: 'var(--brand)', color: '#fff',
+                  textDecoration: 'none', flexShrink: 0,
+                }}>
+                  Check in →
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Two-column */}
       <div className="dash-grid">
         <div style={{ display: 'grid', gap: 28 }}>
           <section>
@@ -294,11 +290,9 @@ export default function Dashboard() {
             />
             {recent.length === 0 ? (
               <EmptyState
-                icon="📚"
-                title="No resources yet"
+                icon="📚" title="No resources yet"
                 body="Be the first to contribute to the class library."
-                actionLabel="Upload a resource"
-                actionHref="/upload"
+                actionLabel="Upload a resource" actionHref="/upload"
               />
             ) : (
               <div className="dash-recents">
@@ -323,42 +317,26 @@ export default function Dashboard() {
                     to={`/resources?course=${encodeURIComponent(c.name)}`}
                     className="card"
                     style={{
-                      textDecoration: 'none',
-                      color: 'inherit',
+                      textDecoration: 'none', color: 'inherit',
                       padding: '14px 16px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 8,
+                      display: 'flex', alignItems: 'center',
+                      justifyContent: 'space-between', gap: 8,
                     }}
                   >
                     <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontWeight: 700,
-                          fontSize: 14,
-                          letterSpacing: '-0.01em',
-                          color: 'var(--text)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {c.name}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: 'var(--text-muted)',
-                          marginTop: 2,
-                        }}
-                      >
+                      <div style={{
+                        fontWeight: 700, fontSize: 14,
+                        letterSpacing: '-0.01em', color: 'var(--text)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>{c.name}</div>
+                      <div style={{
+                        fontSize: 12, color: 'var(--text-muted)', marginTop: 2,
+                      }}>
                         {c.count} resource{c.count === 1 ? '' : 's'}
                       </div>
                     </div>
-                    <span style={{ color: 'var(--slate-400)', fontSize: 16 }}>
-                      →
-                    </span>
+                    <span style={{ color: 'var(--slate-400)', fontSize: 16 }}>→</span>
                   </Link>
                 ))}
               </div>
@@ -368,106 +346,62 @@ export default function Dashboard() {
 
         <aside style={{ display: 'grid', gap: 20 }}>
           <div className="card" style={{ padding: 16 }}>
-            <h3
-              style={{
-                fontSize: 11,
-                textTransform: 'uppercase',
-                letterSpacing: '0.08em',
-                color: 'var(--text-muted)',
-                marginBottom: 12,
-              }}
-            >
-              Quick actions
-            </h3>
+            <h3 style={{
+              fontSize: 11, textTransform: 'uppercase',
+              letterSpacing: '0.08em', color: 'var(--text-muted)',
+              marginBottom: 12,
+            }}>Quick actions</h3>
             <div style={{ display: 'grid', gap: 2 }}>
               <QuickLink to="/upload" icon="＋" label="Upload resource" />
               <QuickLink to="/resources" icon="🔍" label="Search library" />
+              <QuickLink to="/attendance" icon="✓" label="Check attendance" />
+              <QuickLink to="/timetable" icon="📅" label="View timetable" />
               <QuickLink to="/offline" icon="📥" label="Offline materials" />
               {canManage && (
-                <QuickLink to="/manage" icon="✓" label="Review queue" />
+                <QuickLink to="/manage" icon="⚙" label="Review queue" />
               )}
             </div>
           </div>
 
           <div className="card" style={{ padding: 16 }}>
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'baseline',
-                marginBottom: 4,
-              }}
-            >
-              <h3
-                style={{
-                  fontSize: 11,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  color: 'var(--text-muted)',
-                }}
-              >
-                Latest announcements
-              </h3>
+            <div style={{
+              display: 'flex', justifyContent: 'space-between',
+              alignItems: 'baseline', marginBottom: 4,
+            }}>
+              <h3 style={{
+                fontSize: 11, textTransform: 'uppercase',
+                letterSpacing: '0.08em', color: 'var(--text-muted)',
+              }}>Latest announcements</h3>
               {ann.length > 0 && (
-                <Link
-                  to="/announcements"
-                  style={{ fontSize: 11, fontWeight: 600 }}
-                >
+                <Link to="/announcements" style={{ fontSize: 11, fontWeight: 600 }}>
                   All →
                 </Link>
               )}
             </div>
             {ann.length === 0 ? (
-              <p
-                style={{
-                  fontSize: 13,
-                  color: 'var(--text-muted)',
-                  margin: '12px 0 0',
-                }}
-              >
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '12px 0 0' }}>
                 No announcements yet.
               </p>
             ) : (
-              <ul
-                style={{
-                  listStyle: 'none',
-                  padding: 0,
-                  margin: 0,
-                  display: 'grid',
-                }}
-              >
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid' }}>
                 {ann.slice(0, 4).map((a) => (
                   <li key={a.id}>
-                    <Link
-                      to="/announcements"
-                      style={{
-                        textDecoration: 'none',
-                        color: 'inherit',
-                        display: 'block',
-                        padding: '10px 0',
-                        borderTop: '1px solid var(--border)',
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: 13,
-                          fontWeight: 600,
-                          color: 'var(--text)',
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
+                    <Link to="/announcements" style={{
+                      textDecoration: 'none', color: 'inherit', display: 'block',
+                      padding: '10px 0',
+                      borderTop: '1px solid var(--border)',
+                    }}>
+                      <div style={{
+                        fontSize: 13, fontWeight: 600, color: 'var(--text)',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
                         {a.pinned && '📌 '}
                         {a.title}
                       </div>
-                      <div
-                        style={{
-                          fontSize: 11,
-                          color: 'var(--text-muted)',
-                          marginTop: 2,
-                        }}
-                      >
+                      <div style={{
+                        fontSize: 11, color: 'var(--text-muted)', marginTop: 2,
+                      }}>
                         {new Date(a.created_at).toLocaleDateString()}
                       </div>
                     </Link>
@@ -482,57 +416,26 @@ export default function Dashboard() {
   );
 }
 
-// ── Sub-components ─────────────────────────────────────
-
 function StatCard({ icon, label, value, href, accent, highlight }) {
   return (
-    <Link
-      to={href}
-      className="card"
-      style={{
-        textDecoration: 'none',
-        color: 'inherit',
-        padding: '14px 16px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 12,
-        borderColor: highlight ? accent : 'var(--border)',
-        borderWidth: highlight ? 2 : 1,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 20,
-          width: 40,
-          height: 40,
-          borderRadius: 10,
-          background: `${accent}15`,
-          display: 'grid',
-          placeItems: 'center',
-          flexShrink: 0,
-        }}
-      >
-        {icon}
-      </div>
+    <Link to={href} className="card" style={{
+      textDecoration: 'none', color: 'inherit',
+      padding: '14px 16px',
+      display: 'flex', alignItems: 'center', gap: 12,
+      borderColor: highlight ? accent : 'var(--border)',
+      borderWidth: highlight ? 2 : 1,
+    }}>
+      <div style={{
+        fontSize: 20, width: 40, height: 40, borderRadius: 10,
+        background: `${accent}15`,
+        display: 'grid', placeItems: 'center', flexShrink: 0,
+      }}>{icon}</div>
       <div style={{ minWidth: 0 }}>
-        <div
-          style={{
-            fontSize: 22,
-            fontWeight: 700,
-            lineHeight: 1,
-            color: 'var(--text)',
-            letterSpacing: '-0.02em',
-          }}
-        >
-          {value}
-        </div>
-        <div
-          style={{
-            fontSize: 12,
-            color: 'var(--text-muted)',
-            marginTop: 4,
-          }}
-        >
+        <div style={{
+          fontSize: 22, fontWeight: 700, lineHeight: 1,
+          color: 'var(--text)', letterSpacing: '-0.02em',
+        }}>{value}</div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
           {label}
         </div>
       </div>
@@ -542,14 +445,10 @@ function StatCard({ icon, label, value, href, accent, highlight }) {
 
 function SectionHeader({ title, action, actionHref }) {
   return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'baseline',
-        marginBottom: 12,
-      }}
-    >
+    <div style={{
+      display: 'flex', justifyContent: 'space-between',
+      alignItems: 'baseline', marginBottom: 12,
+    }}>
       <h2 style={{ fontSize: 16, letterSpacing: '-0.01em' }}>{title}</h2>
       {action && actionHref && (
         <Link to={actionHref} style={{ fontSize: 13, fontWeight: 500 }}>
@@ -563,47 +462,27 @@ function SectionHeader({ title, action, actionHref }) {
 function ResourceCard({ resource, canManage }) {
   const showStatus = canManage || resource.status !== 'approved';
   const badgeClass =
-    resource.status === 'approved'
-      ? 'badge-success'
-      : resource.status === 'rejected'
-      ? 'badge-danger'
-      : 'badge-warning';
+    resource.status === 'approved' ? 'badge-success'
+    : resource.status === 'rejected' ? 'badge-danger'
+    : 'badge-warning';
   const typeLabel = resource.resource_type.replace('_', ' ');
 
   return (
-    <Link
-      to={`/resources/${resource.id}`}
-      className="card"
-      style={{
-        textDecoration: 'none',
-        color: 'inherit',
-        padding: 14,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 10,
-        height: '100%',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          gap: 8,
-        }}
-      >
-        <div
-          style={{
-            fontSize: 22,
-            width: 40,
-            height: 40,
-            borderRadius: 10,
-            background: 'var(--slate-100)',
-            display: 'grid',
-            placeItems: 'center',
-            flexShrink: 0,
-          }}
-        >
+    <Link to={`/resources/${resource.id}`} className="card" style={{
+      textDecoration: 'none', color: 'inherit',
+      padding: 14,
+      display: 'flex', flexDirection: 'column',
+      gap: 10, height: '100%',
+    }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between',
+        alignItems: 'flex-start', gap: 8,
+      }}>
+        <div style={{
+          fontSize: 22, width: 40, height: 40, borderRadius: 10,
+          background: 'var(--slate-100)',
+          display: 'grid', placeItems: 'center', flexShrink: 0,
+        }}>
           {TYPE_ICONS[resource.resource_type] || '📁'}
         </div>
         {showStatus && (
@@ -611,31 +490,16 @@ function ResourceCard({ resource, canManage }) {
         )}
       </div>
       <div style={{ flex: 1 }}>
-        <div
-          style={{
-            fontWeight: 600,
-            fontSize: 14,
-            color: 'var(--text)',
-            display: '-webkit-box',
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-            lineHeight: 1.35,
-            minHeight: '2.7em',
-          }}
-        >
-          {resource.title}
-        </div>
-        <div
-          style={{
-            fontSize: 12,
-            color: 'var(--text-muted)',
-            marginTop: 6,
-            display: 'flex',
-            gap: 6,
-            flexWrap: 'wrap',
-          }}
-        >
+        <div style={{
+          fontWeight: 600, fontSize: 14, color: 'var(--text)',
+          display: '-webkit-box',
+          WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          lineHeight: 1.35, minHeight: '2.7em',
+        }}>{resource.title}</div>
+        <div style={{
+          fontSize: 12, color: 'var(--text-muted)', marginTop: 6,
+          display: 'flex', gap: 6, flexWrap: 'wrap',
+        }}>
           <span>{resource.course_name}</span>
           <span>·</span>
           <span>{typeLabel}</span>
@@ -649,36 +513,22 @@ function ResourceCard({ resource, canManage }) {
 
 function QuickLink({ to, icon, label }) {
   return (
-    <Link
-      to={to}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '8px 10px',
-        borderRadius: 'var(--radius-sm)',
-        textDecoration: 'none',
-        color: 'var(--text)',
-        fontSize: 13,
-        transition: 'background 140ms ease',
-      }}
+    <Link to={to} style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '8px 10px',
+      borderRadius: 'var(--radius-sm)',
+      textDecoration: 'none', color: 'var(--text)', fontSize: 13,
+      transition: 'background 140ms ease',
+    }}
       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--slate-100)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
     >
-      <span
-        style={{
-          width: 24,
-          height: 24,
-          borderRadius: 6,
-          background: 'var(--slate-100)',
-          display: 'grid',
-          placeItems: 'center',
-          fontSize: 12,
-          flexShrink: 0,
-        }}
-      >
-        {icon}
-      </span>
+      <span style={{
+        width: 24, height: 24, borderRadius: 6,
+        background: 'var(--slate-100)',
+        display: 'grid', placeItems: 'center',
+        fontSize: 12, flexShrink: 0,
+      }}>{icon}</span>
       <span>{label}</span>
     </Link>
   );
@@ -689,25 +539,13 @@ function EmptyState({ icon, title, body, actionLabel, actionHref }) {
     <div className="card" style={{ textAlign: 'center', padding: 36 }}>
       <div style={{ fontSize: 36, marginBottom: 8 }}>{icon}</div>
       <p style={{ fontWeight: 600, fontSize: 15 }}>{title}</p>
-      <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>
-        {body}
-      </p>
+      <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>{body}</p>
       {actionLabel && actionHref && (
-        <Link
-          to={actionHref}
-          className="btn-primary"
-          style={{
-            display: 'inline-block',
-            marginTop: 16,
-            padding: '8px 16px',
-            borderRadius: 'var(--radius-sm)',
-            textDecoration: 'none',
-            fontSize: 13,
-            fontWeight: 500,
-          }}
-        >
-          {actionLabel}
-        </Link>
+        <Link to={actionHref} className="btn-primary" style={{
+          display: 'inline-block', marginTop: 16,
+          padding: '8px 16px', borderRadius: 'var(--radius-sm)',
+          textDecoration: 'none', fontSize: 13, fontWeight: 500,
+        }}>{actionLabel}</Link>
       )}
     </div>
   );

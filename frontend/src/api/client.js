@@ -1,5 +1,16 @@
 const TOKEN_KEY = 'compeng.token';
 
+// Backend origin for cross-origin fetches (Render + Vercel setup).
+// Empty string in local dev — Vite's proxy handles /api.
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+
+/** Prefix a relative path (e.g. "/api/me/avatar/") with the backend origin. */
+export function apiUrl(path) {
+  if (!path) return path;
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${API_BASE}${path}`;
+}
+
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t) => localStorage.setItem(TOKEN_KEY, t);
 export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
@@ -14,6 +25,7 @@ export class ApiError extends Error {
 
 export async function apiRequest(path, { method = 'GET', body } = {}) {
   const opts = { method, headers: {} };
+
   if (body instanceof FormData) {
     opts.body = body;
   } else if (body !== undefined) {
@@ -24,7 +36,7 @@ export async function apiRequest(path, { method = 'GET', body } = {}) {
   const token = getToken();
   if (token) opts.headers.Authorization = `Token ${token}`;
 
-  const res = await fetch(`/api${path}`, opts);
+  const res = await fetch(`${API_BASE}/api${path}`, opts);
 
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('application/json') ? await res.json().catch(() => null) : null;
@@ -47,29 +59,33 @@ export const api = {
   del: (p) => apiRequest(p, { method: 'DELETE' }),
 };
 
-export async function downloadResourceFile(id) {
+// ── File helpers ─────────────────────────────────────────────
+
+function authHeaders() {
   const token = getToken();
-  const res = await fetch(`/api/resources/${id}/download/`, {
-    headers: token ? { Authorization: `Token ${token}` } : {},
-  });
-  if (!res.ok) throw new Error(`Download failed (${res.status})`);
-  return res.blob();
+  return token ? { Authorization: `Token ${token}` } : {};
 }
 
-export async function downloadVersionFile(versionId) {
-  const token = getToken();
-  const res = await fetch(`/api/resources/versions/${versionId}/download/`, {
-    headers: token ? { Authorization: `Token ${token}` } : {},
+export async function downloadResourceFile(id) {
+  const res = await fetch(`${API_BASE}/api/resources/${id}/download/`, {
+    headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   return res.blob();
 }
 
 export async function viewResourceFile(id) {
-  const token = getToken();
-  const res = await fetch(`/api/resources/${id}/view/`, {
-    headers: token ? { Authorization: `Token ${token}` } : {},
+  const res = await fetch(`${API_BASE}/api/resources/${id}/view/`, {
+    headers: authHeaders(),
   });
   if (!res.ok) throw new Error(`Unable to open file (${res.status})`);
   return res.blob();
 }
+
+export async function downloadVersionFile(versionId) {
+  const res = await fetch(`${API_BASE}/api/resources/versions/${versionId}/download/`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  return res.blob();
+} 

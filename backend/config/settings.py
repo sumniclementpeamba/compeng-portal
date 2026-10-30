@@ -71,6 +71,7 @@ INSTALLED_APPS = [
     "resources",
     "announcements",
     "audit",
+    "attendance",
 ]
 
 # ── Middleware ───────────────────────────────────────────────
@@ -231,3 +232,44 @@ if not DEBUG:
         "x-csrftoken",
         "x-requested-with",
     ] 
+
+
+# ── Class authentication ─────────────────────────────────────
+# All students imported from the class CSV share this password.
+# Change it via the GENERAL_PASSWORD env var to rotate everyone's
+# password at once — no need to touch the database.
+GENERAL_PASSWORD = os.environ.get("GENERAL_PASSWORD", "compeng-2026") 
+
+
+# ─────────────────────────────────────────────────────────────
+# Semester configuration
+#
+# Update this at the start of each semester.
+# All date strings are ISO format (YYYY-MM-DD).
+#
+# - periods: consecutive teaching blocks. Holidays/breaks fall
+#   between periods and are automatically excluded.
+# - excluded_dates: specific dates to skip entirely (e.g. days
+#   already passed before tracking began, or days when the
+#   timetable wasn't yet set up).
+# - holidays: public holidays during the semester.
+# ─────────────────────────────────────────────────────────────
+SEMESTER_CONFIG = {
+    "name": "2026/2027 — Semester 1",
+    "periods": [
+        {"label": "Term 1", "start": "2026-10-26", "end": "2026-12-18"},
+        {"label": "Term 2", "start": "2027-01-05", "end": "2027-01-29"},
+    ],
+    "excluded_dates": [
+        "2026-10-26",   # 4 exhausted days — tracking started Oct 30
+        "2026-10-27",
+        "2026-10-28",
+        "2026-10-29",
+    ],
+    "holidays": [
+        # Add public holidays as they come, e.g.:
+        # "2026-12-25",   # Christmas
+        # "2026-12-26",   # Boxing Day
+        # "2027-01-01",   # New Year
+    ],
+}

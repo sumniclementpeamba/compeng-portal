@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib.auth import authenticate
+from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Count, Q
 from django.http import FileResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
@@ -21,6 +22,7 @@ from rest_framework.views import APIView
 
 from accounts.permissions import CanReview, IsAdminRole, role_of
 from audit.models import log
+from .csv_import import import_members_from_csv
 from .models import ClassMembership, Notification, User
 from .serializers import (
     MemberListSerializer,
@@ -31,17 +33,13 @@ from .serializers import (
 
 
 # ─────────────────────────────────────────────────────────────
-# Register
+# Register — admin-only, bypass CSV gate for individual overrides
 # ─────────────────────────────────────────────────────────────
 class RegisterView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAdminRole]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def post(self, request):
-        if request.data.get("access_code") != settings.CLASS_ACCESS_CODE:
-            return Response(
-                {"detail": "Invalid class access code."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
         s = RegisterSerializer(data=request.data)
         s.is_valid(raise_exception=True)
         user = s.save()
@@ -53,7 +51,7 @@ class RegisterView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Login
+# Login — reference number first, then legacy fallbacks
 # ─────────────────────────────────────────────────────────────
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -62,32 +60,51 @@ class LoginView(APIView):
         raw = (request.data.get("username") or "").strip()
         password = request.data.get("password") or ""
 
-        # 1. Direct username match
-        user = authenticate(username=raw, password=password)
+        if not raw or not password:
+            return Response(
+                {"detail": "Reference number and password are required."},
+                status=400,
+            )
 
-        # 2. Slugified version
-        if not user:
-            slug = slugify(raw)
-            if slug and slug != raw:
-                user = authenticate(username=slug, password=password)
+        candidates = []
+        seen_ids = set()
 
-        # 3. Exact full-name match
-        if not user and raw:
-            matches = User.objects.filter(first_name__iexact=raw)
-            if matches.count() == 1:
-                candidate = matches.first()
-                if candidate.check_password(password):
-                    user = candidate
+        def add_candidates(qs):
+            for u in qs:
+                if u.pk not in seen_ids:
+                    seen_ids.add(u.pk)
+                    candidates.append(u)
 
-        if not user:
-            return Response({"detail": "Invalid credentials."}, status=400)
+        # 1. Reference number — canonical for CSV-imported students
+        add_candidates(User.objects.filter(reference_number__iexact=raw)[:5])
 
-        token, _ = Token.objects.get_or_create(user=user)
-        return Response({"token": token.key, "user": UserSerializer(user).data})
+        # 2. Direct username — admin accounts, legacy users
+        add_candidates(User.objects.filter(username=raw)[:5])
+
+        # 3. Slugified username
+        slug = slugify(raw)
+        if slug and slug != raw:
+            add_candidates(User.objects.filter(username=slug)[:5])
+
+        # 4. Exact full-name match — legacy
+        add_candidates(User.objects.filter(first_name__iexact=raw)[:5])
+
+        for user in candidates:
+            if user.check_password(password):
+                token, _ = Token.objects.get_or_create(user=user)
+                return Response({
+                    "token": token.key,
+                    "user": UserSerializer(user).data,
+                })
+
+        return Response(
+            {"detail": "Invalid reference number or password."},
+            status=400,
+        )
 
 
 # ─────────────────────────────────────────────────────────────
-# Me
+# Me — get / patch own profile
 # ─────────────────────────────────────────────────────────────
 class MeView(APIView):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
@@ -153,7 +170,7 @@ class MeAvatarView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Members — list + avatar + role change
+# Members — list
 # ─────────────────────────────────────────────────────────────
 class MemberListView(generics.ListAPIView):
     serializer_class = MemberListSerializer
@@ -186,6 +203,7 @@ class MemberListView(generics.ListAPIView):
                 Q(first_name__icontains=q)
                 | Q(username__icontains=q)
                 | Q(email__icontains=q)
+                | Q(reference_number__icontains=q)
             )
 
         role = p.get("role")
@@ -209,6 +227,9 @@ class MemberListView(generics.ListAPIView):
         return qs
 
 
+# ─────────────────────────────────────────────────────────────
+# Any member's avatar — rep/admin only
+# ─────────────────────────────────────────────────────────────
 class MemberAvatarView(APIView):
     authentication_classes = []
     permission_classes = []
@@ -245,6 +266,9 @@ class MemberAvatarView(APIView):
         )
 
 
+# ─────────────────────────────────────────────────────────────
+# Change a member's role — admin only
+# ─────────────────────────────────────────────────────────────
 class MemberRoleUpdateView(APIView):
     permission_classes = [IsAdminRole]
 
@@ -296,6 +320,65 @@ class MemberRoleUpdateView(APIView):
             "username": target.username,
             "display_name": target.first_name or target.username,
             "role": role_of(target),
+        })
+
+
+# ─────────────────────────────────────────────────────────────
+# CSV import of class roster — admin only
+# ─────────────────────────────────────────────────────────────
+class MemberCSVUploadView(APIView):
+    permission_classes = [IsAdminRole]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        file: UploadedFile = request.FILES.get("file")
+        if not file:
+            return Response({"detail": "No file uploaded."}, status=400)
+        if not file.name.lower().endswith(".csv"):
+            return Response({"detail": "File must be a .csv"}, status=400)
+
+        password = getattr(settings, "GENERAL_PASSWORD", "compeng-2026")
+
+        try:
+            result = import_members_from_csv(file, password)
+        except Exception as e:
+            return Response({"detail": str(e)}, status=400)
+
+        log(
+            request.user,
+            "members.csv_imported",
+            created=result["created"],
+            updated=result["updated"],
+            errors=len(result["errors"]),
+        )
+
+        return Response({
+            **result,
+            "password": password,
+        })
+
+
+# ─────────────────────────────────────────────────────────────
+# Force-reset all non-admin passwords to the general password
+# ─────────────────────────────────────────────────────────────
+class ResetAllPasswordsView(APIView):
+    permission_classes = [IsAdminRole]
+
+    def post(self, request):
+        password = getattr(settings, "GENERAL_PASSWORD", "compeng-2026")
+
+        users = User.objects.filter(is_superuser=False, is_staff=False)
+        count = 0
+        for user in users:
+            user.set_password(password)
+            user.save(update_fields=["password"])
+            count += 1
+
+        log(request.user, "members.passwords_reset", count=count)
+
+        return Response({
+            "reset": count,
+            "password": password,
         })
 
 

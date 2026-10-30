@@ -1,47 +1,64 @@
 import { useEffect, useState } from 'react';
 import { resourcesApi } from '../api/resources';
-import { api, getToken } from '../api/client';
+import { api, apiUrl, getToken } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { PageHeader, StatCard, EmptyState } from '../components/PageUI';
 
 const ACTION_META = {
-  'resource.created':          { icon: '📤', verb: 'Published',                accent: 'var(--brand)' },
-  'resource.approved':         { icon: '✅', verb: 'Approved',                 accent: 'var(--success)' },
-  'resource.rejected':         { icon: '❌', verb: 'Rejected',                 accent: 'var(--danger)' },
-  'resource.version_uploaded': { icon: '🔄', verb: 'Uploaded a new version of', accent: 'var(--brand-500)' },
-  'member.role_changed':       { icon: '👤', verb: 'Changed role of',          accent: '#7c3aed' },
+  'resource.created':          { icon: '📤', verb: 'Published',                 accent: 'var(--brand)' },
+  'resource.approved':         { icon: '✅', verb: 'Approved',                  accent: 'var(--success)' },
+  'resource.rejected':         { icon: '❌', verb: 'Rejected',                  accent: 'var(--danger)' },
+  'resource.version_uploaded': { icon: '🔄', verb: 'Uploaded a new version of',  accent: 'var(--brand-500)' },
+  'member.role_changed':       { icon: '👤', verb: 'Changed role of',           accent: '#7c3aed' },
+  'members.csv_imported':      { icon: '📋', verb: 'Imported class list',       accent: 'var(--brand)' },
+  'members.passwords_reset':   { icon: '🔐', verb: 'Reset passwords for',       accent: 'var(--warning)' },
 };
 
 function actionMeta(action) {
   return ACTION_META[action] || { icon: '•', verb: action, accent: 'var(--slate-500)' };
 }
 
+// ═════════════════════════════════════════════════════════════
+// Main page — role-aware tabs
+// ═════════════════════════════════════════════════════════════
 export default function Management() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [tab, setTab] = useState('pending');
+
+  // Guard: if somehow tab === 'audit' while not admin (stale state, deep link),
+  // fall back to 'pending' silently.
+  const safeTab = tab === 'audit' && !isAdmin ? 'pending' : tab;
 
   return (
     <div className="animate-fade-up">
       <PageHeader
         eyebrow="Moderation"
         title="Management"
-        subtitle="Review contributions, inspect the audit trail, and see who's in the class."
+        subtitle={
+          isAdmin
+            ? 'Review contributions, inspect the audit trail, and manage the class roster.'
+            : 'Review contributions and manage the class roster.'
+        }
       />
 
       <div className="manage-tabs">
-        <TabButton active={tab === 'pending'} onClick={() => setTab('pending')}>
+        <TabButton active={safeTab === 'pending'} onClick={() => setTab('pending')}>
           Pending approvals
         </TabButton>
-        <TabButton active={tab === 'audit'} onClick={() => setTab('audit')}>
-          Audit log
-        </TabButton>
-        <TabButton active={tab === 'members'} onClick={() => setTab('members')}>
+        {isAdmin && (
+          <TabButton active={safeTab === 'audit'} onClick={() => setTab('audit')}>
+            Audit log
+          </TabButton>
+        )}
+        <TabButton active={safeTab === 'members'} onClick={() => setTab('members')}>
           Members
         </TabButton>
       </div>
 
-      {tab === 'pending' && <PendingPanel />}
-      {tab === 'audit' && <AuditPanel />}
-      {tab === 'members' && <MembersPanel />}
+      {safeTab === 'pending' && <PendingPanel />}
+      {safeTab === 'audit' && isAdmin && <AuditPanel />}
+      {safeTab === 'members' && <MembersPanel />}
     </div>
   );
 }
@@ -70,7 +87,9 @@ function TabButton({ active, onClick, children }) {
   );
 }
 
-// ── Pending approvals ─────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+// Pending approvals (rep + admin)
+// ═════════════════════════════════════════════════════════════
 function PendingPanel() {
   const [pending, setPending] = useState([]);
   const [err, setErr] = useState('');
@@ -226,7 +245,9 @@ function PendingPanel() {
   );
 }
 
-// ── Audit log ─────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+// Audit log (admin only)
+// ═════════════════════════════════════════════════════════════
 function AuditPanel() {
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -270,6 +291,7 @@ function AuditPanel() {
         <FilterChip active={filter === 'resource.created'} onClick={() => setFilter('resource.created')}>Published</FilterChip>
         <FilterChip active={filter === 'resource.version_uploaded'} onClick={() => setFilter('resource.version_uploaded')}>Version uploads</FilterChip>
         <FilterChip active={filter === 'member.role_changed'} onClick={() => setFilter('member.role_changed')}>Role changes</FilterChip>
+        <FilterChip active={filter === 'members.csv_imported'} onClick={() => setFilter('members.csv_imported')}>CSV imports</FilterChip>
         <button
           onClick={load}
           disabled={loading}
@@ -319,16 +341,60 @@ function AuditRow({ entry }) {
   const version = entry.details?.version;
   const oldRole = entry.details?.old_role;
   const newRole = entry.details?.new_role;
+  const created = entry.details?.created;
+  const updated = entry.details?.updated;
+  const count = entry.details?.count;
+
+  if (entry.action === 'members.csv_imported') {
+    return (
+      <div className="card" style={{ padding: '14px 16px' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: `${meta.accent}15`, display: 'grid', placeItems: 'center', fontSize: 18, flexShrink: 0 }}>
+            {meta.icon}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14 }}>
+              <strong>{entry.actor_name}</strong>{' '}
+              <span style={{ color: 'var(--slate-600)' }}>imported class list</span>{' '}
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                (created {created || 0}, updated {updated || 0})
+              </span>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+              {new Date(entry.created_at).toLocaleString()}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (entry.action === 'members.passwords_reset') {
+    return (
+      <div className="card" style={{ padding: '14px 16px' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: `${meta.accent}15`, display: 'grid', placeItems: 'center', fontSize: 18, flexShrink: 0 }}>
+            {meta.icon}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14 }}>
+              <strong>{entry.actor_name}</strong>{' '}
+              <span style={{ color: 'var(--slate-600)' }}>reset passwords for</span>{' '}
+              <strong>{count || 0} account(s)</strong>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+              {new Date(entry.created_at).toLocaleString()}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card" style={{ padding: '14px 16px' }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-        <div style={{
-          width: 36, height: 36, borderRadius: 10,
-          background: `${meta.accent}15`,
-          display: 'grid', placeItems: 'center',
-          fontSize: 18, flexShrink: 0,
-        }}>
+        <div style={{ width: 36, height: 36, borderRadius: 10, background: `${meta.accent}15`, display: 'grid', placeItems: 'center', fontSize: 18, flexShrink: 0 }}>
           {meta.icon}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -337,13 +403,7 @@ function AuditRow({ entry }) {
             <span style={{ color: 'var(--slate-600)' }}>{meta.verb}</span>{' '}
             <strong style={{ color: 'var(--text)' }}>{title}</strong>
             {version && (
-              <span style={{
-                marginLeft: 6, fontSize: 11,
-                padding: '1px 6px', borderRadius: 4,
-                background: 'var(--slate-100)',
-                color: 'var(--slate-600)',
-                fontWeight: 600,
-              }}>
+              <span style={{ marginLeft: 6, fontSize: 11, padding: '1px 6px', borderRadius: 4, background: 'var(--slate-100)', color: 'var(--slate-600)', fontWeight: 600 }}>
                 v{version}
               </span>
             )}
@@ -357,15 +417,7 @@ function AuditRow({ entry }) {
             {new Date(entry.created_at).toLocaleString()}
           </div>
           {note && (
-            <div style={{
-              marginTop: 8, padding: '8px 12px',
-              background: 'var(--slate-50)',
-              borderLeft: '2px solid var(--slate-300)',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: 13, color: 'var(--slate-700)',
-              lineHeight: 1.55,
-              fontStyle: 'italic',
-            }}>
+            <div style={{ marginTop: 8, padding: '8px 12px', background: 'var(--slate-50)', borderLeft: '2px solid var(--slate-300)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: 'var(--slate-700)', lineHeight: 1.55, fontStyle: 'italic' }}>
               "{note}"
             </div>
           )}
@@ -375,7 +427,9 @@ function AuditRow({ entry }) {
   );
 }
 
-// ── Members directory ─────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+// Members (rep + admin; CSV import admin only)
+// ═════════════════════════════════════════════════════════════
 function MembersPanel() {
   const { user: currentUser } = useAuth();
   const isAdmin = currentUser?.role === 'admin';
@@ -387,6 +441,11 @@ function MembersPanel() {
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [busyId, setBusyId] = useState(null);
+
+  const [csvFile, setCsvFile] = useState(null);
+  const [csvResult, setCsvResult] = useState(null);
+  const [csvBusy, setCsvBusy] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -427,6 +486,42 @@ function MembersPanel() {
     }
   }
 
+  async function uploadCsv(e) {
+    e.preventDefault();
+    if (!csvFile) { setErr('Choose a CSV file first.'); return; }
+    setErr('');
+    setMsg('');
+    setCsvResult(null);
+    setCsvBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', csvFile);
+      const r = await api.post('/members/import-csv/', fd);
+      setCsvResult(r);
+      setCsvFile(null);
+      await load();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setCsvBusy(false);
+    }
+  }
+
+  async function resetPasswords() {
+    if (!confirm('Reset ALL non-admin accounts to the general class password? Continue?')) return;
+    setErr('');
+    setMsg('');
+    setResetBusy(true);
+    try {
+      const r = await api.post('/members/reset-passwords/', {});
+      setMsg(`Reset ${r.reset} account(s). Password is now: ${r.password}`);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setResetBusy(false);
+    }
+  }
+
   const totals = {
     total: members.length,
     students: members.filter((m) => m.role === 'student').length,
@@ -436,6 +531,82 @@ function MembersPanel() {
 
   return (
     <div>
+      {isAdmin && (
+        <div className="card" style={{ padding: 20, marginBottom: 20, borderLeft: '3px solid var(--brand)' }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
+            Import class list (CSV)
+          </h3>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.55 }}>
+            Upload a CSV with exactly three columns: <code>Reference number</code>,{' '}
+            <code>Name</code>, <code>Number</code>. New students get the general class
+            password. Existing students keep their password — only their name and
+            number are updated. A header row is optional.
+          </p>
+
+          <form onSubmit={uploadCsv} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+              disabled={csvBusy}
+              style={{ flex: 1, minWidth: 220 }}
+            />
+            <button
+              type="submit"
+              className="btn-primary"
+              disabled={csvBusy || !csvFile}
+              style={{ padding: '9px 16px' }}
+            >
+              {csvBusy ? 'Importing…' : 'Import'}
+            </button>
+          </form>
+
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              onClick={resetPasswords}
+              disabled={resetBusy}
+              style={{
+                padding: '7px 14px', fontSize: 12,
+                borderRadius: 'var(--radius-sm)',
+                background: '#fff', border: '1px solid var(--border-strong)',
+                color: 'var(--slate-700)',
+              }}
+            >
+              {resetBusy ? 'Resetting…' : '↺ Reset all passwords to class password'}
+            </button>
+          </div>
+
+          {csvResult && (
+            <div style={{
+              marginTop: 14, padding: 14,
+              background: csvResult.errors.length ? 'var(--warning-bg)' : 'var(--success-bg)',
+              color: csvResult.errors.length ? 'var(--warning)' : 'var(--success)',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: 13,
+              border: `1px solid ${csvResult.errors.length ? '#fde68a' : '#bbf7d0'}`,
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                ✅ Created {csvResult.created}, updated {csvResult.updated}
+                {csvResult.errors.length > 0 && `, ${csvResult.errors.length} error(s)`}
+              </div>
+              <div style={{ fontSize: 12, marginBottom: csvResult.errors.length ? 8 : 0 }}>
+                General password: <code>{csvResult.password}</code>
+              </div>
+              {csvResult.errors.length > 0 && (
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {csvResult.errors.slice(0, 15).map((e, i) => (
+                    <li key={i} style={{ fontSize: 12 }}>{e}</li>
+                  ))}
+                  {csvResult.errors.length > 15 && (
+                    <li style={{ fontSize: 12 }}>…and {csvResult.errors.length - 15} more</li>
+                  )}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="stats-row" style={{ marginBottom: 20 }}>
         <StatCard icon="👥" label="Total members" value={totals.total} accent="var(--brand)" />
         <StatCard icon="🎓" label="Students" value={totals.students} accent="var(--slate-500)" />
@@ -448,7 +619,7 @@ function MembersPanel() {
         style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}
       >
         <input
-          placeholder="Search by name, username, or email…"
+          placeholder="Search by name, reference, or phone…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           style={{ flex: 1, minWidth: 200 }}
@@ -493,7 +664,7 @@ function MembersPanel() {
         <EmptyState
           icon="👥"
           title="No members match"
-          body="Try clearing the search or role filter."
+          body="Try clearing the search or role filter, or upload a CSV above."
         />
       )}
 
@@ -525,7 +696,7 @@ function MemberCard({
   const displayName = member.display_name || member.username;
   const initials = displayName.slice(0, 2).toUpperCase();
   const avatarSrc = member.avatar_url
-    ? `${member.avatar_url}?token=${getToken()}`
+    ? `${apiUrl(member.avatar_url)}?token=${getToken()}`
     : null;
 
   const roleBadge =
@@ -554,19 +725,12 @@ function MemberCard({
           overflow: 'hidden', flexShrink: 0,
         }}>
           {avatarSrc ? (
-            <img
-              src={avatarSrc}
-              alt=""
-              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-            />
+            <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
           ) : initials}
         </div>
 
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{
-            fontWeight: 700, fontSize: 15,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
+          <div style={{ fontWeight: 700, fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {displayName}
             {isSelf && (
               <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6, fontWeight: 400 }}>
@@ -574,13 +738,18 @@ function MemberCard({
               </span>
             )}
           </div>
-          <div style={{
-            fontSize: 12, color: 'var(--text-muted)',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            marginTop: 1,
-          }}>
-            @{member.username}
-          </div>
+          {member.reference_number ? (
+            <div style={{
+              fontSize: 12, color: 'var(--text-muted)', marginTop: 1,
+              fontFamily: 'var(--font-mono)', letterSpacing: '0.01em',
+            }}>
+              {member.reference_number}
+            </div>
+          ) : (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
+              @{member.username}
+            </div>
+          )}
           <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <span className={`badge ${roleBadge}`} style={{ fontSize: 10 }}>
               {roleLabel}
@@ -599,32 +768,29 @@ function MemberCard({
         borderTop: '1px solid var(--border)',
         display: 'grid', gap: 6, fontSize: 12,
       }}>
+        {member.phone_number && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', color: 'var(--slate-600)' }}>
+            <span style={{ flexShrink: 0 }}>📞</span>
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {member.phone_number}
+            </span>
+          </div>
+        )}
         {member.email && (
-          <div style={{
-            display: 'flex', gap: 6, alignItems: 'center',
-            color: 'var(--slate-600)',
-            overflow: 'hidden',
-          }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', color: 'var(--slate-600)', overflow: 'hidden' }}>
             <span style={{ flexShrink: 0 }}>✉</span>
             <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {member.email}
             </span>
           </div>
         )}
-        <div style={{
-          display: 'flex', justifyContent: 'space-between',
-          alignItems: 'center', gap: 8, color: 'var(--text-muted)',
-        }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, color: 'var(--text-muted)' }}>
           <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <span>📤</span>
             <span>{member.uploads_count} uploaded</span>
           </span>
           {member.pending_count > 0 && (
-            <span style={{
-              fontSize: 10, padding: '1px 6px', borderRadius: 4,
-              background: 'var(--warning-bg)', color: 'var(--warning)',
-              fontWeight: 600,
-            }}>
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'var(--warning-bg)', color: 'var(--warning)', fontWeight: 600 }}>
               {member.pending_count} pending
             </span>
           )}

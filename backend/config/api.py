@@ -1,25 +1,38 @@
 from django.http import JsonResponse
 from django.urls import include, path
 
-# Import views from your apps
 from accounts.views import (
-    MemberAvatarView, MemberListView, MemberRoleUpdateView,
-    MeAvatarView, MeView, NotificationListView,
-    NotificationMarkAllReadView, NotificationMarkReadView,
-    NotificationUnreadCountView, notification_stream,
+    LoginView,
+    MemberAvatarView,
+    MemberCSVUploadView,
+    MemberListView,
+    MemberRoleUpdateView,
+    MeAvatarView,
+    MeView,
+    NotificationListView,
+    NotificationMarkAllReadView,
+    NotificationMarkReadView,
+    NotificationUnreadCountView,
+    RegisterView,
+    ResetAllPasswordsView,
+    notification_stream,
 )
 from audit.views import AuditLogListView
 
-def health_check(request):
-    """A simple endpoint to confirm the service is running."""
-    return JsonResponse({"status": "ok"})
+
+def health(request):
+    return JsonResponse({"ok": True})
+
 
 urlpatterns = [
-    # Health Check
-    path("health/", health_check, name="health-check"),
+    # Health check — Render / Railway use this
+    path("health/", health, name="health"),
 
-    # Authentication & Profile
-    path("auth/", include("accounts.urls")),
+    # Auth
+    path("auth/login/", LoginView.as_view(), name="login"),
+    path("auth/register/", RegisterView.as_view(), name="register"),
+
+    # Me
     path("me/", MeView.as_view(), name="me"),
     path("me/avatar/", MeAvatarView.as_view(), name="me-avatar"),
 
@@ -30,13 +43,20 @@ urlpatterns = [
     path("notifications/<int:pk>/read/", NotificationMarkReadView.as_view(), name="notifications-read"),
     path("notifications/stream/", notification_stream, name="notifications-stream"),
 
-    # Resources, Announcements, and Admin
+    # Resources
     path("resources/", include("resources.urls")),
+
+    # Announcements
     path("announcements/", include("announcements.urls")),
+
+    # Audit
     path("audit-logs/", AuditLogListView.as_view(), name="audit-logs"),
 
-    # Member Management
+    # Members
     path("members/", MemberListView.as_view(), name="members"),
+    path("members/import-csv/", MemberCSVUploadView.as_view(), name="members-import-csv"),
+    path("members/reset-passwords/", ResetAllPasswordsView.as_view(), name="members-reset-passwords"),
     path("members/<int:user_id>/avatar/", MemberAvatarView.as_view(), name="member-avatar"),
     path("members/<int:user_id>/role/", MemberRoleUpdateView.as_view(), name="member-role"),
+    path("attendance/", include("attendance.urls")),
 ] 

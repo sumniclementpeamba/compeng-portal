@@ -3,20 +3,36 @@ from django.db import models
 
 
 # ─────────────────────────────────────────────────────────────
-# User — custom, with avatar + class metadata
+# Reference numbers are 9 characters in the class CSV.
+# Example: UA2600133
 # ─────────────────────────────────────────────────────────────
+REFERENCE_NUMBER_MAX_LEN = 9
+
+
 class User(AbstractUser):
     matric_no = models.CharField(max_length=30, blank=True)
     level = models.CharField(max_length=10, blank=True)
+
+    # "Number" column from the class CSV — typically a phone number.
+    phone_number = models.CharField(max_length=30, blank=True)
+
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
+
+    # Reference number from the admission letter / class list.
+    # Example: UA2600133 (9 chars). Unique so no two students share one.
+    # Nullable so admin accounts created outside the CSV flow are unaffected.
+    reference_number = models.CharField(
+        max_length=REFERENCE_NUMBER_MAX_LEN,
+        blank=True,
+        null=True,
+        unique=True,
+        db_index=True,
+    )
 
     def __str__(self):
         return self.username
 
 
-# ─────────────────────────────────────────────────────────────
-# ClassMembership — one row per user, holds their role
-# ─────────────────────────────────────────────────────────────
 class ClassMembership(models.Model):
     ROLE_STUDENT = "student"
     ROLE_REP = "rep"
@@ -38,9 +54,6 @@ class ClassMembership(models.Model):
         return f"{self.user.username} ({self.role})"
 
 
-# ─────────────────────────────────────────────────────────────
-# Notification — inbox entries, SSE-streamed to the browser
-# ─────────────────────────────────────────────────────────────
 class Notification(models.Model):
     KIND_CHOICES = [
         ("announcement", "Announcement"),

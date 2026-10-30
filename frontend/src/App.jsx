@@ -12,8 +12,10 @@ import Login from './pages/Login';
 const Dashboard      = lazy(() => import('./pages/Dashboard'));
 const Resources      = lazy(() => import('./pages/Resources'));
 const ResourceDetail = lazy(() => import('./pages/ResourceDetail'));
-const Upload         = lazy(() => import('./pages/Upload'));
 const Announcements  = lazy(() => import('./pages/Announcements'));
+const Attendance     = lazy(() => import('./pages/Attendance'));
+const Timetable      = lazy(() => import('./pages/Timetable'));
+const Upload         = lazy(() => import('./pages/Upload'));
 const Offline        = lazy(() => import('./pages/Offline'));
 const Management     = lazy(() => import('./pages/Management'));
 const Profile        = lazy(() => import('./pages/Profile'));
@@ -22,10 +24,7 @@ const NotFound       = lazy(() => import('./pages/NotFound'));
 function PageFallback() {
   return (
     <div style={{ display: 'grid', placeItems: 'center', minHeight: '50vh' }}>
-      <span
-        className="spinner spinner-dark"
-        style={{ width: 28, height: 28, borderWidth: 3 }}
-      />
+      <span className="spinner spinner-dark" style={{ width: 28, height: 28, borderWidth: 3 }} />
     </div>
   );
 }
@@ -50,6 +49,8 @@ export default function App() {
                 <Route path="resources" element={<Resources />} />
                 <Route path="resources/:id" element={<ResourceDetail />} />
                 <Route path="announcements" element={<Announcements />} />
+                <Route path="attendance" element={<Attendance />} />
+                <Route path="timetable" element={<Timetable />} />
                 <Route path="upload" element={<Upload />} />
                 <Route path="offline" element={<Offline />} />
                 <Route path="profile" element={<Profile />} />

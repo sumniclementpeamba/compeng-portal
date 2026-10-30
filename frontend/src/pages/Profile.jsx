@@ -1,13 +1,23 @@
 import { useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { api, getToken } from '../api/client';
+import { api, apiUrl, getToken } from '../api/client';
 import { PageHeader, InfoCard } from '../components/PageUI';
 
 const LABEL = { fontSize: 13, fontWeight: 500, color: 'var(--slate-700)', display: 'block' };
 const FIELD = { width: '100%', marginTop: 4 };
 
+// Defensive fallback — if apiUrl isn't exported by client.js (older version),
+// fall back to the raw path so the page still renders.
+const safeApiUrl = (path) => {
+  if (!path) return path;
+  try {
+    if (typeof apiUrl === 'function') return apiUrl(path);
+  } catch {}
+  return path;
+};
+
 export default function Profile() {
-  const { user, refresh } = useAuth();
+  const { user, loading, refresh } = useAuth();
   const [editing, setEditing] = useState(false);
   const [avatarVersion, setAvatarVersion] = useState(0);
   const [imgFailed, setImgFailed] = useState(false);
@@ -25,9 +35,46 @@ export default function Profile() {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
-  if (!user) return null;
+  // ── Loading state — never return null ──────────────────────
+  if (loading) {
+    return (
+      <div style={{ display: 'grid', placeItems: 'center', minHeight: '50vh' }}>
+        <span
+          className="spinner spinner-dark"
+          style={{ width: 28, height: 28, borderWidth: 3 }}
+        />
+      </div>
+    );
+  }
 
-  const displayName = user.first_name || user.username;
+  // ── No user — show clear message instead of blank ──────────
+  if (!user) {
+    console.warn('[Profile] user is null after loading — auth may have failed');
+    return (
+      <div className="animate-fade-up" style={{ maxWidth: 560, margin: '60px auto', textAlign: 'center' }}>
+        <div style={{ fontSize: 48, marginBottom: 12 }}>🔒</div>
+        <h2>Not signed in</h2>
+        <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>
+          Your session may have expired. Please sign in again.
+        </p>
+        <a
+          href="/login"
+          className="btn-primary"
+          style={{
+            display: 'inline-block',
+            marginTop: 20,
+            padding: '9px 18px',
+            borderRadius: 'var(--radius-sm)',
+            textDecoration: 'none',
+          }}
+        >
+          Go to sign in
+        </a>
+      </div>
+    );
+  }
+
+  const displayName = user.first_name || user.username || 'User';
   const initials = displayName.slice(0, 2).toUpperCase();
   const roleBadge =
     user.role === 'admin'
@@ -36,9 +83,8 @@ export default function Profile() {
       ? 'badge-warning'
       : 'badge-neutral';
 
-  // Avatar source for display
   const serverAvatarSrc = user.avatar_url
-    ? `${user.avatar_url}?token=${getToken()}&v=${avatarVersion}`
+    ? `${safeApiUrl(user.avatar_url)}?token=${getToken()}&v=${avatarVersion}`
     : null;
 
   function openFilePicker() {
@@ -93,17 +139,15 @@ export default function Profile() {
       if ((form.level || '') !== (user.level || '')) {
         fd.append('level', form.level || '');
       }
-      if (newAvatar) {
-        fd.append('avatar', newAvatar);
-      }
-      if (removeAvatar) {
-        fd.append('avatar_clear', 'true');
-      }
+      if (newAvatar) fd.append('avatar', newAvatar);
+      if (removeAvatar) fd.append('avatar_clear', 'true');
 
       await api.patch('/me/', fd);
-      await refresh();
 
-      // Reset edit state
+      if (typeof refresh === 'function') {
+        await refresh();
+      }
+
       if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
       setNewAvatar(null);
       setAvatarPreviewUrl(null);
@@ -119,7 +163,6 @@ export default function Profile() {
     }
   }
 
-  // Determine which avatar preview to render while editing
   const editingAvatarSrc = avatarPreviewUrl
     ? avatarPreviewUrl
     : removeAvatar
@@ -131,7 +174,7 @@ export default function Profile() {
       <PageHeader
         eyebrow="Account"
         title="Profile"
-        subtitle="Your details as they appear to the class."
+        subtitle="Your identity, credentials, and contact details."
         actions={
           !editing ? (
             <button
@@ -166,50 +209,38 @@ export default function Profile() {
       />
 
       {msg && !editing && (
-        <div
-          style={{
-            padding: '10px 14px',
-            background: 'var(--success-bg)',
-            color: 'var(--success)',
-            borderRadius: 'var(--radius-sm)',
-            fontSize: 14,
-            marginBottom: 16,
-            border: '1px solid #bbf7d0',
-          }}
-        >
+        <div style={{
+          padding: '10px 14px',
+          background: 'var(--success-bg)',
+          color: 'var(--success)',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: 14,
+          marginBottom: 16,
+          border: '1px solid #bbf7d0',
+        }}>
           {msg}
         </div>
       )}
 
       {err && (
-        <div
-          role="alert"
-          style={{
-            padding: '10px 14px',
-            background: 'var(--danger-bg)',
-            color: 'var(--danger)',
-            borderRadius: 'var(--radius-sm)',
-            fontSize: 14,
-            marginBottom: 16,
-            border: '1px solid #fecaca',
-          }}
-        >
+        <div role="alert" style={{
+          padding: '10px 14px',
+          background: 'var(--danger-bg)',
+          color: 'var(--danger)',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: 14,
+          marginBottom: 16,
+          border: '1px solid #fecaca',
+        }}>
           {err}
         </div>
       )}
 
       <div className="split-grid">
         <div style={{ display: 'grid', gap: 20 }}>
-          {/* ── Hero card: avatar + name ─────────────── */}
+          {/* Hero */}
           <div className="card" style={{ padding: 24 }}>
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 20,
-                flexWrap: 'wrap',
-              }}
-            >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
               <AvatarDisplay
                 src={editing ? editingAvatarSrc : serverAvatarSrc}
                 initials={initials}
@@ -218,24 +249,13 @@ export default function Profile() {
                 imgFailed={imgFailed}
               />
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div
-                  style={{
-                    fontSize: 22,
-                    fontWeight: 700,
-                    letterSpacing: '-0.02em',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
+                <div style={{
+                  fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em',
+                  overflow: 'hidden', textOverflow: 'ellipsis',
+                }}>
                   {displayName}
                 </div>
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: 'var(--text-muted)',
-                    marginTop: 2,
-                  }}
-                >
+                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
                   {user.role === 'admin'
                     ? 'Administrator'
                     : user.role === 'rep'
@@ -273,11 +293,9 @@ export default function Profile() {
                         setRemoveAvatar(true);
                       }}
                       style={{
-                        padding: '6px 12px',
-                        fontSize: 12,
+                        padding: '6px 12px', fontSize: 12,
                         color: 'var(--danger)',
-                        background: 'transparent',
-                        border: 'none',
+                        background: 'transparent', border: 'none',
                       }}
                     >
                       Remove photo
@@ -288,7 +306,49 @@ export default function Profile() {
             </div>
           </div>
 
-          {/* ── Account details (view / edit) ────────── */}
+          {/* Credentials */}
+          <div className="card" style={{
+            padding: 24,
+            borderLeft: '3px solid var(--brand)',
+            background: 'linear-gradient(180deg, #eff6ff 0%, #ffffff 70%)',
+          }}>
+            <h2 style={{
+              fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em',
+              color: 'var(--brand)', fontWeight: 700, marginBottom: 4,
+            }}>
+              Your credentials
+            </h2>
+            <p style={{ fontSize: 12, color: 'var(--slate-600)', marginBottom: 16, lineHeight: 1.55 }}>
+              Use your reference number with the class password to sign in from any device.
+            </p>
+
+            <div style={{ display: 'grid', gap: 12 }}>
+              <CredentialRow
+                label="Reference number"
+                value={user.reference_number || '—'}
+                mono
+                hint="This is your sign-in identifier."
+              />
+              <CredentialRow
+                label="Phone number"
+                value={user.phone_number || '—'}
+                hint="Used by the course rep to reach you."
+              />
+            </div>
+
+            <div style={{
+              marginTop: 16, padding: '10px 12px',
+              background: '#fff',
+              border: '1px dashed var(--border-strong)',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: 12, color: 'var(--slate-600)', lineHeight: 1.55,
+            }}>
+              <strong>Forgot your password?</strong> All students share the same
+              class password. Ask your course rep if you need it again.
+            </div>
+          </div>
+
+          {/* Personal details */}
           {editing ? (
             <form
               id="profile-form"
@@ -296,17 +356,11 @@ export default function Profile() {
               className="card"
               style={{ padding: 24, display: 'grid', gap: 14 }}
             >
-              <h2
-                style={{
-                  fontSize: 13,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  color: 'var(--text-muted)',
-                  fontWeight: 600,
-                  margin: 0,
-                }}
-              >
-                Account details
+              <h2 style={{
+                fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.08em',
+                color: 'var(--text-muted)', fontWeight: 600, margin: 0,
+              }}>
+                Personal details
               </h2>
 
               <label style={LABEL}>
@@ -341,38 +395,23 @@ export default function Profile() {
                 />
               </label>
 
-              <p
-                style={{
-                  fontSize: 12,
-                  color: 'var(--text-muted)',
-                  margin: 0,
-                }}
-              >
-                Your sign-in ID stays the same even if you change your name.
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
+                Your reference number and phone are managed by the course rep.
               </p>
             </form>
           ) : (
             <div className="card" style={{ padding: 24 }}>
-              <h2
-                style={{
-                  fontSize: 13,
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.08em',
-                  color: 'var(--text-muted)',
-                  marginBottom: 16,
-                  fontWeight: 600,
-                }}
-              >
-                Account details
+              <h2 style={{
+                fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.08em',
+                color: 'var(--text-muted)', marginBottom: 16, fontWeight: 600,
+              }}>
+                Personal details
               </h2>
-              <dl
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '140px 1fr',
-                  gap: 12,
-                  margin: 0,
-                }}
-              >
+              <dl style={{
+                display: 'grid',
+                gridTemplateColumns: '140px 1fr',
+                gap: 12, margin: 0,
+              }}>
                 <DetailRow label="Full name" value={user.first_name || '—'} />
                 <DetailRow label="Email" value={user.email || '—'} />
                 <DetailRow label="Level" value={user.level || '—'} />
@@ -383,50 +422,26 @@ export default function Profile() {
 
         <aside style={{ display: 'grid', gap: 16 }}>
           <InfoCard title="Sign-in ID">
-            <code
-              style={{
-                display: 'block',
-                padding: '10px 12px',
-                background: 'var(--slate-100)',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: 13,
-                color: 'var(--slate-700)',
-                wordBreak: 'break-all',
-              }}
-            >
+            <code style={{
+              display: 'block', padding: '10px 12px',
+              background: 'var(--slate-100)', borderRadius: 'var(--radius-sm)',
+              fontSize: 13, color: 'var(--slate-700)', wordBreak: 'break-all',
+            }}>
               {user.username}
             </code>
-            <p
-              style={{
-                fontSize: 12,
-                color: 'var(--text-muted)',
-                marginTop: 10,
-                lineHeight: 1.55,
-              }}
-            >
-              You can sign in with either your <strong>full name</strong> or this ID.
+            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.55 }}>
+              You can sign in with your <strong>reference number</strong> or this ID.
             </p>
           </InfoCard>
 
           <InfoCard title="About roles">
-            <ul
-              style={{
-                margin: 0,
-                paddingLeft: 18,
-                fontSize: 13,
-                color: 'var(--slate-600)',
-                lineHeight: 1.7,
-              }}
-            >
-              <li>
-                <strong>Student</strong> — browse, download, upload for review
-              </li>
-              <li>
-                <strong>Rep</strong> — plus approve uploads, post announcements
-              </li>
-              <li>
-                <strong>Admin</strong> — plus full backend access
-              </li>
+            <ul style={{
+              margin: 0, paddingLeft: 18, fontSize: 13,
+              color: 'var(--slate-600)', lineHeight: 1.7,
+            }}>
+              <li><strong>Student</strong> — browse, download, upload for review</li>
+              <li><strong>Rep</strong> — plus approve uploads, post announcements</li>
+              <li><strong>Admin</strong> — plus full backend access</li>
             </ul>
           </InfoCard>
         </aside>
@@ -435,40 +450,25 @@ export default function Profile() {
   );
 }
 
-// ── Sub-components ─────────────────────────────────────
-
 function AvatarDisplay({ src, initials, size = 96, onImageError, imgFailed }) {
   const showImg = src && !imgFailed;
   return (
-    <div
-      style={{
-        width: size,
-        height: size,
-        borderRadius: '50%',
-        background: showImg ? 'var(--slate-100)' : 'var(--brand)',
-        color: '#fff',
-        display: 'grid',
-        placeItems: 'center',
-        fontSize: size * 0.32,
-        fontWeight: 700,
-        textTransform: 'uppercase',
-        overflow: 'hidden',
-        flexShrink: 0,
-        border: '3px solid #fff',
-        boxShadow: '0 4px 14px rgba(15,23,42,0.12)',
-      }}
-    >
+    <div style={{
+      width: size, height: size, borderRadius: '50%',
+      background: showImg ? 'var(--slate-100)' : 'var(--brand)',
+      color: '#fff',
+      display: 'grid', placeItems: 'center',
+      fontSize: size * 0.32, fontWeight: 700, textTransform: 'uppercase',
+      overflow: 'hidden', flexShrink: 0,
+      border: '3px solid #fff',
+      boxShadow: '0 4px 14px rgba(15,23,42,0.12)',
+    }}>
       {showImg ? (
         <img
           src={src}
           alt=""
           onError={onImageError}
-          style={{
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            display: 'block',
-          }}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
         />
       ) : (
         initials
@@ -480,16 +480,37 @@ function AvatarDisplay({ src, initials, size = 96, onImageError, imgFailed }) {
 function DetailRow({ label, value }) {
   return (
     <>
-      <dt
-        style={{
-          fontSize: 13,
-          color: 'var(--text-muted)',
-          fontWeight: 500,
-        }}
-      >
+      <dt style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500 }}>
         {label}
       </dt>
       <dd style={{ margin: 0, fontSize: 14 }}>{value}</dd>
     </>
+  );
+}
+
+function CredentialRow({ label, value, mono, hint }) {
+  return (
+    <div>
+      <div style={{
+        fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em',
+        color: 'var(--text-muted)', fontWeight: 600, marginBottom: 4,
+      }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: mono ? 18 : 16, fontWeight: 700,
+        color: 'var(--text)',
+        fontFamily: mono ? 'var(--font-mono)' : 'inherit',
+        letterSpacing: mono ? '0.02em' : 'normal',
+        wordBreak: 'break-all',
+      }}>
+        {value}
+      </div>
+      {hint && (
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+          {hint}
+        </div>
+      )}
+    </div>
   );
 } 

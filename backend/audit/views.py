@@ -1,13 +1,15 @@
 from rest_framework import generics
 
-from accounts.permissions import CanReview
+from accounts.permissions import IsAdminRole
 from .models import AuditLog
 from .serializers import AuditLogSerializer
 
 
 class AuditLogListView(generics.ListAPIView):
+    """Admin-only access to the class audit trail."""
+
     serializer_class = AuditLogSerializer
-    permission_classes = [CanReview]
+    permission_classes = [IsAdminRole]
 
     def get_queryset(self):
         qs = AuditLog.objects.select_related("actor").all()
