@@ -2,26 +2,35 @@ services:
   - type: web
     name: compeng-api
     runtime: python
-    rootDir: backend
+    region: frankfurt
     plan: free
+    rootDir: backend
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
-    startCommand: python manage.py migrate --noinput && gunicorn config.wsgi:application --workers 2 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT -k gthread
+    startCommand: python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120 -k gthread
     healthCheckPath: /api/health/
     envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
       - key: SECRET_KEY
         generateValue: true
-      - key: PYTHON_VERSION
-        value: 3.12.0
       - key: DEBUG
         value: "False"
       - key: CLASS_ACCESS_CODE
         value: compeng-2025
+      - key: GENERAL_PASSWORD
+        value: compeng-2026
       - key: DATABASE_URL
         fromDatabase:
           name: compeng-db
           property: connectionString
+      - key: ALLOWED_HOSTS
+        value: compeng-api.onrender.com,localhost,127.0.0.1
+      - key: CORS_ALLOWED_ORIGINS
+        value: http://localhost:5173
+      - key: CSRF_TRUSTED_ORIGINS
+        value: http://localhost:5173
 
 databases:
   - name: compeng-db
     plan: free
-    databaseName: compeng_portal
+    databaseName: compeng_portal 

@@ -1,8 +1,6 @@
 """
-Django settings — CompEng Class Portal (API-only, Vercel + Render)
-
-Local dev:   SQLite, Vite proxies /api → 127.0.0.1:8000 (no CORS needed)
-Production:  Postgres via DATABASE_URL, CORS allows the Vercel frontend
+Django settings — CompEng Class Portal
+Local: SQLite + .env  ·  Production: Postgres via DATABASE_URL + Render env vars
 """
 import os
 from pathlib import Path
@@ -24,19 +22,19 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "").strip()
 if not SECRET_KEY:
     raise RuntimeError(
         "\n\n  SECRET_KEY missing.\n"
-        "  Local:      set it in backend/.env\n"
-        "  Production: set it as an environment variable on Render\n"
+        "  Local:      set in backend/.env\n"
+        "  Production: set as env var on Render\n"
     )
 
 DEBUG = os.environ.get("DEBUG", "0") == "1"
 
-# ── ALLOWED_HOSTS ────────────────────────────────────────────
+# ── Hosts ────────────────────────────────────────────────────
 ALLOWED_HOSTS = [
     h.strip()
     for h in os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
     if h.strip()
 ]
-# Render injects RENDER_EXTERNAL_HOSTNAME on every deploy.
+# Render injects RENDER_EXTERNAL_HOSTNAME automatically
 _render_host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
 if _render_host:
     ALLOWED_HOSTS.append(_render_host)
@@ -75,11 +73,11 @@ INSTALLED_APPS = [
 ]
 
 # ── Middleware ───────────────────────────────────────────────
-# Order matters:
-#  1. CorsMiddleware       — must be above CommonMiddleware so CORS
-#                            headers are attached to redirects/errors
-#  2. SecurityMiddleware   — HTTPS redirect, HSTS
-#  3. WhiteNoiseMiddleware — serve admin static files before hits Django
+# Order:
+#   1. CorsMiddleware       — above CommonMiddleware so CORS headers
+#                             attach to redirects and errors too
+#   2. SecurityMiddleware   — HTTPS redirect, HSTS
+#   3. WhiteNoiseMiddleware — serves /static/ (admin CSS, DRF styles)
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
@@ -94,6 +92,7 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "config.urls"
 
+# ── Templates ────────────────────────────────────────────────
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
@@ -112,8 +111,8 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 
 # ── Database ─────────────────────────────────────────────────
-# DATABASE_URL is set by Render's Postgres → uses Postgres.
-# Otherwise → SQLite for local dev.
+# Production: DATABASE_URL from Render Postgres plugin
+# Local: falls back to SQLite at backend/db.sqlite3
 DATABASES = {
     "default": dj_database_url.config(
         default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
@@ -147,12 +146,15 @@ MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# ⚠️ Render free tier has an ephemeral filesystem.
-# Uploaded files (resources, avatars, audio) are LOST on redeploy or
-# restart. For persistent storage, mount a Render Disk at MEDIA_ROOT,
-# or migrate to external storage (AWS S3, Cloudflare R2, Cloudinary).
-# The Render Disk setting for this project:
-#   Name: media, Mount Path: /app/backend/media, Size: 1 GB
+# WhiteNoise: compress + cache-bust static files (Django 5.x/6.x syntax)
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
 
 # ── DRF ──────────────────────────────────────────────────────
 REST_FRAMEWORK = {
@@ -171,12 +173,8 @@ REST_FRAMEWORK = {
 }
 
 # ── CORS ─────────────────────────────────────────────────────
-# The Vercel frontend is on a different origin from this API, so CORS
-# must be configured. Token auth via the Authorization header means we
-# never send cookies cross-origin → CORS_ALLOW_CREDENTIALS stays False.
-#
-# Add your actual Vercel URL via the CORS_ALLOWED_ORIGINS env var on
-# Render — do NOT hardcode it here.
+# Token auth (Authorization header) → no cookies cross-origin.
+# Vercel preview regex handles every preview deployment automatically.
 CORS_ALLOW_CREDENTIALS = False
 
 CORS_ALLOWED_ORIGINS = [
@@ -188,7 +186,6 @@ CORS_ALLOWED_ORIGINS = [
     if o.strip()
 ]
 
-# Vercel preview deployments — every PR gets a unique *.vercel.app URL.
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https://.*\.vercel\.app$",
 ]
@@ -198,17 +195,24 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024     # 50 MB
 DATA_UPLOAD_MAX_MEMORY_SIZE = 50 * 1024 * 1024
 
 # ── App-level ────────────────────────────────────────────────
-CLASS_ACCESS_CODE = os.environ.get("CLASS_ACCESS_CODE", "change-me")
+CLASS_ACCESS_CODE = os.environ.get("CLASS_ACCESS_CODE", "compeng-2025")
+GENERAL_PASSWORD = os.environ.get("GENERAL_PASSWORD", "compeng-2026")
 
-# ── Static file storage (WhiteNoise) ─────────────────────────
-# Django 4.2+ prefers STORAGES over the deprecated STATICFILES_STORAGE.
-STORAGES = {
-    "default": {
-        "BACKEND": "django.core.files.storage.FileSystemStorage",
-    },
-    "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
-    },
+# ── Semester configuration ───────────────────────────────────
+# Update at the start of each semester.
+SEMESTER_CONFIG = {
+    "name": "2026/2027 — Semester 1",
+    "periods": [
+        {"label": "Term 1", "start": "2026-10-26", "end": "2026-12-18"},
+        {"label": "Term 2", "start": "2027-01-05", "end": "2027-01-29"},
+    ],
+    "excluded_dates": [
+        "2026-10-26",
+        "2026-10-27",
+        "2026-10-28",
+        "2026-10-29",
+    ],
+    "holidays": [],
 }
 
 # ── Production hardening ─────────────────────────────────────
@@ -221,9 +225,7 @@ if not DEBUG:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
 
-    # A shared cache sitting in front of the API must vary by Origin,
-    # or a request from one origin gets a cached response meant for
-    # another — which breaks CORS silently.
+    # Shared caches must vary by Origin or CORS breaks
     CORS_ALLOW_HEADERS = [
         "accept",
         "authorization",
@@ -232,44 +234,3 @@ if not DEBUG:
         "x-csrftoken",
         "x-requested-with",
     ] 
-
-
-# ── Class authentication ─────────────────────────────────────
-# All students imported from the class CSV share this password.
-# Change it via the GENERAL_PASSWORD env var to rotate everyone's
-# password at once — no need to touch the database.
-GENERAL_PASSWORD = os.environ.get("GENERAL_PASSWORD", "compeng-2026") 
-
-
-# ─────────────────────────────────────────────────────────────
-# Semester configuration
-#
-# Update this at the start of each semester.
-# All date strings are ISO format (YYYY-MM-DD).
-#
-# - periods: consecutive teaching blocks. Holidays/breaks fall
-#   between periods and are automatically excluded.
-# - excluded_dates: specific dates to skip entirely (e.g. days
-#   already passed before tracking began, or days when the
-#   timetable wasn't yet set up).
-# - holidays: public holidays during the semester.
-# ─────────────────────────────────────────────────────────────
-SEMESTER_CONFIG = {
-    "name": "2026/2027 — Semester 1",
-    "periods": [
-        {"label": "Term 1", "start": "2026-10-26", "end": "2026-12-18"},
-        {"label": "Term 2", "start": "2027-01-05", "end": "2027-01-29"},
-    ],
-    "excluded_dates": [
-        "2026-10-26",   # 4 exhausted days — tracking started Oct 30
-        "2026-10-27",
-        "2026-10-28",
-        "2026-10-29",
-    ],
-    "holidays": [
-        # Add public holidays as they come, e.g.:
-        # "2026-12-25",   # Christmas
-        # "2026-12-26",   # Boxing Day
-        # "2027-01-01",   # New Year
-    ],
-}
