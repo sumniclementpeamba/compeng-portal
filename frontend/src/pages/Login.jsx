@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 const LABEL = { fontSize: 13, fontWeight: 500, color: 'var(--slate-700)', display: 'block' };
 const FIELD = { width: '100%', marginTop: 4 };
 
-const PROFILE_IMG = '/rep.JPG';
+const PROFILE_IMG = '/images2.jpeg';
 const REP_CAPTION = 'Billy Boye Antwi · Course Rep';
 const REFERENCE_MAX_LEN = 9;
 
