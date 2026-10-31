@@ -6,7 +6,7 @@ const LABEL = { fontSize: 13, fontWeight: 500, color: 'var(--slate-700)', displa
 const FIELD = { width: '100%', marginTop: 4 };
 
 const PROFILE_IMG = '/rep.JPG';
-const REP_CAPTION = 'Clement · Course Rep';
+const REP_CAPTION = 'Billy Boye Antwi · Course Rep';
 const REFERENCE_MAX_LEN = 9;
 
 // Footer metadata

@@ -70,6 +70,7 @@ INSTALLED_APPS = [
     "announcements",
     "audit",
     "attendance",
+    "storages",
 ]
 
 # ── Middleware ───────────────────────────────────────────────
@@ -234,3 +235,37 @@ if not DEBUG:
         "x-csrftoken",
         "x-requested-with",
     ] 
+
+
+# ── Media Storage on Cloudflare R2 ──────────────────────────
+AWS_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
+AWS_STORAGE_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "")
+AWS_S3_ENDPOINT_URL = os.environ.get("R2_ENDPOINT_URL", "")
+AWS_S3_CUSTOM_DOMAIN = os.environ.get("R2_PUBLIC_DOMAIN", "")
+AWS_S3_REGION_NAME = "auto"
+AWS_DEFAULT_ACL = "public-read"
+AWS_QUERYSTRING_AUTH = False
+
+# Fall back to local FileSystemStorage if R2 isn't configured
+_use_r2 = bool(AWS_ACCESS_KEY_ID and AWS_STORAGE_BUCKET_NAME)
+
+STORAGES = {
+    "default": {
+        "BACKEND": (
+            "storages.backends.s3boto3.S3Boto3Storage"
+            if _use_r2
+            else "django.core.files.storage.FileSystemStorage"
+        ),
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
+MEDIA_URL = (
+    f"https://{AWS_S3_CUSTOM_DOMAIN}/"
+    if AWS_S3_CUSTOM_DOMAIN
+    else "/media/"
+)
+MEDIA_ROOT = BASE_DIR / "media" 
