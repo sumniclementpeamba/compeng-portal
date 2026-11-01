@@ -29,7 +29,7 @@ export default function Management() {
   const isAdmin = user?.role === 'admin';
   const [tab, setTab] = useState('pending');
 
-  // Guard: if tab === 'audit' but user isn't admin (stale state, deep link),
+  // Guard: if tab === 'audit' while not admin (stale state, deep link),
   // silently fall back to 'pending'.
   const safeTab = tab === 'audit' && !isAdmin ? 'pending' : tab;
 
@@ -464,7 +464,8 @@ function MembersPanel() {
       if (roleFilter) params.set('role', roleFilter);
       const qs = params.toString();
       const d = await api.get(`/members/${qs ? '?' + qs : ''}`);
-      // Handle both shapes: flat array (no pagination) OR {results: [...]}
+      // Backend returns a flat array (no pagination on members endpoint),
+      // but handle the paginated shape too for backward compatibility.
       const list = Array.isArray(d) ? d : (d.results || []);
       setMembers(list);
     } catch (e) {
@@ -594,6 +595,7 @@ function MembersPanel() {
               borderRadius: 'var(--radius-sm)',
               fontSize: 13,
               border: `1px solid ${csvResult.errors.length ? '#fde68a' : '#bbf7d0'}`,
+              overflowWrap: 'anywhere',
             }}>
               <div style={{ fontWeight: 600, marginBottom: 6 }}>
                 ✅ Created {csvResult.created}, updated {csvResult.updated}
@@ -605,7 +607,7 @@ function MembersPanel() {
               {csvResult.errors.length > 0 && (
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
                   {csvResult.errors.slice(0, 30).map((e, i) => (
-                    <li key={i} style={{ fontSize: 12 }}>{e}</li>
+                    <li key={i} style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{e}</li>
                   ))}
                   {csvResult.errors.length > 30 && (
                     <li style={{ fontSize: 12 }}>…and {csvResult.errors.length - 30} more</li>
@@ -651,6 +653,7 @@ function MembersPanel() {
           padding: '12px 16px', background: 'var(--danger-bg)',
           color: 'var(--danger)', borderRadius: 'var(--radius-sm)',
           fontSize: 14, marginBottom: 16, border: '1px solid #fecaca',
+          overflowWrap: 'anywhere',
         }}>
           <strong>Error:</strong> {err}
         </div>
@@ -661,6 +664,7 @@ function MembersPanel() {
           padding: '12px 16px', background: 'var(--success-bg)',
           color: 'var(--success)', borderRadius: 'var(--radius-sm)',
           fontSize: 14, marginBottom: 16, border: '1px solid #bbf7d0',
+          overflowWrap: 'anywhere',
         }}>{msg}</div>
       )}
 
@@ -679,11 +683,7 @@ function MembersPanel() {
       )}
 
       {!loading && members.length > 0 && (
-        <div className="stagger" style={{
-          display: 'grid',
-          gap: 12,
-          gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-        }}>
+        <div className="stagger members-grid">
           {members.map((m) => (
             <MemberCard
               key={m.id}
@@ -723,8 +723,8 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
   const actionable = canManageRoles && !isSelf && !isSuperuser;
 
   return (
-    <div className="card" style={{ padding: 16 }}>
-      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+    <div className="card member-card" style={{ padding: 16 }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', minWidth: 0 }}>
         <div style={{
           width: 52, height: 52, borderRadius: '50%',
           background: avatarSrc ? 'var(--slate-100)' : 'var(--brand)',
@@ -734,12 +734,23 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
           overflow: 'hidden', flexShrink: 0,
         }}>
           {avatarSrc ? (
-            <img src={avatarSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+            <img
+              src={avatarSrc}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
           ) : initials}
         </div>
 
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <div
+            className="member-title"
+            style={{
+              fontWeight: 700, fontSize: 15,
+              overflow: 'hidden', textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap', maxWidth: '100%',
+            }}
+          >
             {displayName}
             {isSelf && (
               <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 6, fontWeight: 400 }}>
@@ -751,11 +762,15 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
             <div style={{
               fontSize: 12, color: 'var(--text-muted)', marginTop: 1,
               fontFamily: 'var(--font-mono)', letterSpacing: '0.01em',
+              overflowWrap: 'anywhere',
             }}>
               {member.reference_number}
             </div>
           ) : (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1 }}>
+            <div style={{
+              fontSize: 12, color: 'var(--text-muted)', marginTop: 1,
+              overflowWrap: 'anywhere',
+            }}>
               @{member.username}
             </div>
           )}
@@ -778,28 +793,51 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
         display: 'grid', gap: 6, fontSize: 12,
       }}>
         {member.phone_number && (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', color: 'var(--slate-600)' }}>
+          <div style={{
+            display: 'flex', gap: 6, alignItems: 'center',
+            color: 'var(--slate-600)', minWidth: 0,
+          }}>
             <span style={{ flexShrink: 0 }}>📞</span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{
+              overflow: 'hidden', textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap', minWidth: 0, flex: 1,
+            }}>
               {member.phone_number}
             </span>
           </div>
         )}
         {member.email && (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', color: 'var(--slate-600)', overflow: 'hidden' }}>
+          <div
+            className="member-email"
+            style={{
+              display: 'flex', gap: 6, alignItems: 'center',
+              color: 'var(--slate-600)', minWidth: 0,
+            }}
+          >
             <span style={{ flexShrink: 0 }}>✉</span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{
+              overflow: 'hidden', textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap', minWidth: 0, flex: 1,
+            }}>
               {member.email}
             </span>
           </div>
         )}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, color: 'var(--text-muted)' }}>
+        <div style={{
+          display: 'flex', justifyContent: 'space-between',
+          alignItems: 'center', gap: 8, color: 'var(--text-muted)',
+          flexWrap: 'wrap',
+        }}>
           <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <span>📤</span>
             <span>{member.uploads_count} uploaded</span>
           </span>
           {member.pending_count > 0 && (
-            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: 'var(--warning-bg)', color: 'var(--warning)', fontWeight: 600 }}>
+            <span style={{
+              fontSize: 10, padding: '1px 6px', borderRadius: 4,
+              background: 'var(--warning-bg)', color: 'var(--warning)',
+              fontWeight: 600,
+            }}>
               {member.pending_count} pending
             </span>
           )}
@@ -857,6 +895,8 @@ function FilterChip({ active, onClick, children }) {
         fontWeight: 500,
         cursor: 'pointer',
         transition: 'all 140ms ease',
+        flexShrink: 0,
+        whiteSpace: 'nowrap',
       }}
     >
       {children}
