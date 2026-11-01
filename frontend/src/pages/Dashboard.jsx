@@ -5,6 +5,7 @@ import { announcementsApi, resourcesApi } from '../api/resources';
 import { useAuth } from '../context/AuthContext';
 import { listOffline } from '../offline/db';
 
+
 const TYPE_ICONS = {
   note: '📝', slide: '📊', past_question: '📜',
   assignment: '📋', lab: '🧪', project: '🛠️',
@@ -17,6 +18,34 @@ function greeting() {
   if (h < 17) return 'Good afternoon';
   return 'Good evening';
 }
+
+// Counts up from 0 to `value` on mount (and re-runs when value changes).
+// Uses requestAnimationFrame — no animation library needed.
+function CountUp({ value, duration = 900 }) {
+  const [display, setDisplay] = useState(0);
+
+  useEffect(() => {
+    if (!value || value === 0) {
+      setDisplay(0);
+      return;
+    }
+    let raf = null;
+    const start = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / duration);
+      // ease-out cubic
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplay(Math.round(value * eased));
+      if (t < 1) raf = requestAnimationFrame(step);
+      else setDisplay(value);
+    };
+    raf = requestAnimationFrame(step);
+    return () => { if (raf) cancelAnimationFrame(raf); };
+  }, [value, duration]);
+
+  return <>{display}</>;
+}
+
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -83,83 +112,13 @@ export default function Dashboard() {
     .filter((e) => e.day_of_week === todayIdx)
     .sort((a, b) => (a.start_time > b.start_time ? 1 : -1));
 
+  const greetingDelay = 0;
+  const greetAnim = (delayMs) => ({
+    animation: `greetingIn 500ms cubic-bezier(0.2, 0.8, 0.2, 1) ${delayMs}ms both`,
+  });
+
   return (
     <div className="animate-fade-up" style={{ display: 'grid', gap: 28 }}>
-      <style>{`
-        .dash-grid {
-          display: grid;
-          gap: 24px;
-          grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-          align-items: start;
-        }
-        .dash-grid > * { min-width: 0; }
-        @media (max-width: 900px) { .dash-grid { grid-template-columns: 1fr; } }
-        .dash-stats {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-          gap: 12px;
-        }
-        .dash-recents {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-          gap: 12px;
-        }
-        .dash-courses {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-          gap: 10px;
-        }
-        .dash-ann-list {
-          list-style: none;
-          padding: 0;
-          margin: 0;
-          display: grid;
-          min-width: 0;
-        }
-        .dash-ann-item {
-          display: block;
-          min-width: 0;
-          text-decoration: none;
-          color: inherit;
-          padding: 10px 0;
-          border-top: 1px solid var(--border);
-        }
-        .dash-ann-title {
-          font-size: 13px;
-          font-weight: 600;
-          color: var(--text);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-          min-width: 0;
-          max-width: 100%;
-        }
-        .dash-ann-card-body {
-          font-size: 14px;
-          color: var(--slate-600);
-          margin-top: 8px;
-          overflow-wrap: anywhere;
-          word-break: break-word;
-          display: -webkit-box;
-          -webkit-line-clamp: 4;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-          line-height: 1.55;
-        }
-        .dash-pinned-body {
-          font-size: 13px;
-          color: #78350f;
-          margin-top: 2px;
-          overflow-wrap: anywhere;
-          word-break: break-word;
-          display: -webkit-box;
-          -webkit-line-clamp: 3;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-          line-height: 1.5;
-        }
-      `}</style>
-
       {/* Hero */}
       <header
         style={{
@@ -168,38 +127,68 @@ export default function Dashboard() {
         }}
       >
         <div style={{ minWidth: 0, flex: '1 1 260px' }}>
-          <p style={{
-            fontSize: 12, fontWeight: 600, color: 'var(--text-muted)',
-            textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0,
-          }}>{today}</p>
-          <h1 style={{
-            fontSize: 30, marginTop: 6,
-            letterSpacing: '-0.025em', lineHeight: 1.15,
-            overflowWrap: 'anywhere',
-          }}>
+          <p
+            style={{
+              fontSize: 12, fontWeight: 600, color: 'var(--text-muted)',
+              textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0,
+              ...greetAnim(greetingDelay + 0),
+            }}
+          >
+            {today}
+          </p>
+          <h1
+            style={{
+              fontSize: 30, marginTop: 6,
+              letterSpacing: '-0.025em', lineHeight: 1.15,
+              overflowWrap: 'anywhere',
+              ...greetAnim(greetingDelay + 100),
+            }}
+          >
             {greeting()}, {firstName}
           </h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 6 }}>
+          <p
+            style={{
+              color: 'var(--text-muted)', fontSize: 14, marginTop: 6,
+              ...greetAnim(greetingDelay + 200),
+            }}
+          >
             {recent.length > 0
               ? `${recent.length} resource${recent.length === 1 ? '' : 's'} from across your courses, ready to explore.`
               : 'Be the first to add to your class library.'}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Link to="/resources" style={{
-            padding: '9px 16px', borderRadius: 'var(--radius-sm)',
-            border: '1px solid var(--border-strong)',
-            background: '#fff', color: 'var(--text)',
-            fontSize: 14, fontWeight: 500,
-            textDecoration: 'none',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}>🔍 Browse</Link>
-          <Link to="/upload" className="btn-primary" style={{
-            padding: '9px 16px', borderRadius: 'var(--radius-sm)',
-            fontSize: 14, fontWeight: 500,
-            textDecoration: 'none',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}>＋ Upload</Link>
+        <div
+          style={{
+            display: 'flex', gap: 8, flexWrap: 'wrap',
+            ...greetAnim(greetingDelay + 300),
+          }}
+        >
+          <Link
+            to="/resources"
+            className="hover-lift"
+            style={{
+              padding: '9px 16px', borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border-strong)',
+              background: '#fff', color: 'var(--text)',
+              fontSize: 14, fontWeight: 500,
+              textDecoration: 'none',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            🔍 Browse
+          </Link>
+          <Link
+            to="/upload"
+            className="btn-primary hover-lift"
+            style={{
+              padding: '9px 16px', borderRadius: 'var(--radius-sm)',
+              fontSize: 14, fontWeight: 500,
+              textDecoration: 'none',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}
+          >
+            ＋ Upload
+          </Link>
         </div>
       </header>
 
@@ -210,16 +199,20 @@ export default function Dashboard() {
         }}>{err}</div>
       )}
 
-      {/* Pinned banner — clamp + wrap so long body never overflows */}
+      {/* Pinned banner with hover shimmer */}
       {topPinned && (
-        <div style={{
-          padding: '14px 18px',
-          background: 'linear-gradient(90deg, #fef3c7 0%, #fef9e7 100%)',
-          border: '1px solid #fde68a', borderLeft: '4px solid #f59e0b',
-          borderRadius: 'var(--radius)',
-          display: 'flex', gap: 12, alignItems: 'flex-start',
-          minWidth: 0,
-        }}>
+        <div
+          className="pinned-glow"
+          style={{
+            padding: '14px 18px',
+            background: 'linear-gradient(90deg, #fef3c7 0%, #fef9e7 100%)',
+            border: '1px solid #fde68a', borderLeft: '4px solid #f59e0b',
+            borderRadius: 'var(--radius)',
+            display: 'flex', gap: 12, alignItems: 'flex-start',
+            minWidth: 0,
+            animation: 'greetingIn 500ms cubic-bezier(0.2, 0.8, 0.2, 1) 400ms both',
+          }}
+        >
           <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>📌</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{
@@ -230,15 +223,17 @@ export default function Dashboard() {
             </div>
             <div className="dash-pinned-body">{topPinned.body}</div>
           </div>
-          <Link to="/announcements" style={{
+          <Link to="/announcements" className="hover-arrow" style={{
             fontSize: 12, color: '#92400e',
             fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
-          }}>View →</Link>
+          }}>
+            View <span className="nav-arrow">→</span>
+          </Link>
         </div>
       )}
 
-      {/* Stats */}
-      <div className="dash-stats">
+      {/* Stats — count-up + hover lift + icon pop + pending pulse */}
+      <div className="dash-stats stagger">
         <StatCard
           icon="📚" label="Resources" value={recent.length}
           href="/resources" accent="var(--brand)"
@@ -261,7 +256,13 @@ export default function Dashboard() {
       </div>
 
       {/* Today's classes */}
-      <div className="card" style={{ padding: 16, minWidth: 0 }}>
+      <div
+        className="card"
+        style={{
+          padding: 16, minWidth: 0,
+          animation: 'greetingIn 500ms cubic-bezier(0.2, 0.8, 0.2, 1) 500ms both',
+        }}
+      >
         <div style={{
           display: 'flex', justifyContent: 'space-between',
           alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8,
@@ -271,8 +272,8 @@ export default function Dashboard() {
             letterSpacing: '0.08em', color: 'var(--text-muted)',
             fontWeight: 600, margin: 0,
           }}>Today's classes</h3>
-          <Link to="/timetable" style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap' }}>
-            {canManage ? 'Manage →' : 'Full week →'}
+          <Link to="/timetable" className="hover-arrow" style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap' }}>
+            {canManage ? 'Manage' : 'Full week'} <span className="nav-arrow">→</span>
           </Link>
         </div>
         {todaysClasses.length === 0 ? (
@@ -291,7 +292,7 @@ export default function Dashboard() {
         ) : (
           <div style={{ display: 'grid', gap: 8 }}>
             {todaysClasses.map((c) => (
-              <div key={c.id} style={{
+              <div key={c.id} className="hover-lift" style={{
                 display: 'flex', justifyContent: 'space-between',
                 alignItems: 'center', gap: 12,
                 padding: '10px 12px',
@@ -299,6 +300,7 @@ export default function Dashboard() {
                 borderRadius: 'var(--radius-sm)',
                 flexWrap: 'wrap',
                 minWidth: 0,
+                cursor: 'pointer',
               }}>
                 <div style={{ minWidth: 0, flex: '1 1 200px' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
@@ -325,13 +327,14 @@ export default function Dashboard() {
                     {c.lecturer && ` · ${c.lecturer}`}
                   </div>
                 </div>
-                <Link to="/attendance" style={{
+                <Link to="/attendance" className="hover-arrow" style={{
                   padding: '5px 12px', fontSize: 11, fontWeight: 600,
                   borderRadius: 'var(--radius-pill)',
                   background: 'var(--brand)', color: '#fff',
                   textDecoration: 'none', flexShrink: 0,
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
                 }}>
-                  Check in →
+                  Check in <span className="nav-arrow">→</span>
                 </Link>
               </div>
             ))}
@@ -355,7 +358,7 @@ export default function Dashboard() {
                 actionLabel="Upload a resource" actionHref="/upload"
               />
             ) : (
-              <div className="dash-recents">
+              <div className="dash-recents stagger">
                 {recent.slice(0, 6).map((r) => (
                   <ResourceCard key={r.id} resource={r} canManage={canManage} />
                 ))}
@@ -370,12 +373,12 @@ export default function Dashboard() {
                 action="All resources"
                 actionHref="/resources"
               />
-              <div className="dash-courses">
+              <div className="dash-courses stagger">
                 {courses.slice(0, 8).map((c) => (
                   <Link
                     key={c.name}
                     to={`/resources?course=${encodeURIComponent(c.name)}`}
-                    className="card"
+                    className="card hover-lift hover-arrow"
                     style={{
                       textDecoration: 'none', color: 'inherit',
                       padding: '14px 16px',
@@ -398,7 +401,9 @@ export default function Dashboard() {
                         {c.count} resource{c.count === 1 ? '' : 's'}
                       </div>
                     </div>
-                    <span style={{ color: 'var(--slate-400)', fontSize: 16, flexShrink: 0 }}>→</span>
+                    <span className="nav-arrow" style={{ color: 'var(--slate-400)', fontSize: 16, flexShrink: 0 }}>
+                      →
+                    </span>
                   </Link>
                 ))}
               </div>
@@ -407,7 +412,13 @@ export default function Dashboard() {
         </div>
 
         <aside style={{ display: 'grid', gap: 20, minWidth: 0 }}>
-          <div className="card" style={{ padding: 16, minWidth: 0 }}>
+          <div
+            className="card"
+            style={{
+              padding: 16, minWidth: 0,
+              animation: 'greetingIn 500ms cubic-bezier(0.2, 0.8, 0.2, 1) 700ms both',
+            }}
+          >
             <h3 style={{
               fontSize: 11, textTransform: 'uppercase',
               letterSpacing: '0.08em', color: 'var(--text-muted)',
@@ -425,8 +436,13 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Sidebar — Latest announcements (safe title + link chain) */}
-          <div className="card" style={{ padding: 16, minWidth: 0 }}>
+          <div
+            className="card"
+            style={{
+              padding: 16, minWidth: 0,
+              animation: 'greetingIn 500ms cubic-bezier(0.2, 0.8, 0.2, 1) 800ms both',
+            }}
+          >
             <div style={{
               display: 'flex', justifyContent: 'space-between',
               alignItems: 'baseline', marginBottom: 4, gap: 8,
@@ -437,8 +453,8 @@ export default function Dashboard() {
                 minWidth: 0,
               }}>Latest announcements</h3>
               {ann.length > 0 && (
-                <Link to="/announcements" style={{ fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                  All →
+                <Link to="/announcements" className="hover-arrow" style={{ fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  All <span className="nav-arrow">→</span>
                 </Link>
               )}
             </div>
@@ -447,7 +463,7 @@ export default function Dashboard() {
                 No announcements yet.
               </p>
             ) : (
-              <ul className="dash-ann-list">
+              <ul className="dash-ann-list stagger">
                 {ann.slice(0, 4).map((a) => (
                   <li key={a.id} style={{ minWidth: 0 }}>
                     <Link to="/announcements" className="dash-ann-item">
@@ -472,32 +488,46 @@ export default function Dashboard() {
   );
 }
 
+
 function StatCard({ icon, label, value, href, accent, highlight }) {
-  return (
-    <Link to={href} className="card" style={{
-      textDecoration: 'none', color: 'inherit',
-      padding: '14px 16px',
-      display: 'flex', alignItems: 'center', gap: 12,
-      borderColor: highlight ? accent : 'var(--border)',
-      borderWidth: highlight ? 2 : 1,
-      minWidth: 0,
-    }}>
-      <div style={{
-        fontSize: 20, width: 40, height: 40, borderRadius: 10,
-        background: `${accent}15`,
-        display: 'grid', placeItems: 'center', flexShrink: 0,
-      }}>{icon}</div>
+  const card = (
+    <Link
+      to={href}
+      className={`card hover-lift hover-icon-pop${highlight ? ' highlight-pulse' : ''}`}
+      style={{
+        textDecoration: 'none', color: 'inherit',
+        padding: '14px 16px',
+        display: 'flex', alignItems: 'center', gap: 12,
+        borderColor: highlight ? accent : 'var(--border)',
+        borderWidth: highlight ? 2 : 1,
+        minWidth: 0,
+      }}
+    >
+      <div
+        className="stat-icon"
+        style={{
+          fontSize: 20, width: 40, height: 40, borderRadius: 10,
+          background: `${accent}15`,
+          display: 'grid', placeItems: 'center', flexShrink: 0,
+        }}
+      >
+        {icon}
+      </div>
       <div style={{ minWidth: 0 }}>
         <div style={{
           fontSize: 22, fontWeight: 700, lineHeight: 1,
           color: 'var(--text)', letterSpacing: '-0.02em',
-        }}>{value}</div>
+          fontVariantNumeric: 'tabular-nums',
+        }}>
+          <CountUp value={value} />
+        </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
           {label}
         </div>
       </div>
     </Link>
   );
+  return card;
 }
 
 function SectionHeader({ title, action, actionHref }) {
@@ -508,8 +538,8 @@ function SectionHeader({ title, action, actionHref }) {
     }}>
       <h2 style={{ fontSize: 16, letterSpacing: '-0.01em', minWidth: 0 }}>{title}</h2>
       {action && actionHref && (
-        <Link to={actionHref} style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>
-          {action} →
+        <Link to={actionHref} className="hover-arrow" style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>
+          {action} <span className="nav-arrow">→</span>
         </Link>
       )}
     </div>
@@ -525,21 +555,28 @@ function ResourceCard({ resource, canManage }) {
   const typeLabel = resource.resource_type.replace('_', ' ');
 
   return (
-    <Link to={`/resources/${resource.id}`} className="card" style={{
-      textDecoration: 'none', color: 'inherit',
-      padding: 14,
-      display: 'flex', flexDirection: 'column',
-      gap: 10, height: '100%', minWidth: 0,
-    }}>
+    <Link
+      to={`/resources/${resource.id}`}
+      className="card hover-lift hover-icon-pop"
+      style={{
+        textDecoration: 'none', color: 'inherit',
+        padding: 14,
+        display: 'flex', flexDirection: 'column',
+        gap: 10, height: '100%', minWidth: 0,
+      }}
+    >
       <div style={{
         display: 'flex', justifyContent: 'space-between',
         alignItems: 'flex-start', gap: 8,
       }}>
-        <div style={{
-          fontSize: 22, width: 40, height: 40, borderRadius: 10,
-          background: 'var(--slate-100)',
-          display: 'grid', placeItems: 'center', flexShrink: 0,
-        }}>
+        <div
+          className="stat-icon"
+          style={{
+            fontSize: 22, width: 40, height: 40, borderRadius: 10,
+            background: 'var(--slate-100)',
+            display: 'grid', placeItems: 'center', flexShrink: 0,
+          }}
+        >
           {TYPE_ICONS[resource.resource_type] || '📁'}
         </div>
         {showStatus && (
@@ -571,16 +608,25 @@ function ResourceCard({ resource, canManage }) {
 
 function QuickLink({ to, icon, label }) {
   return (
-    <Link to={to} style={{
-      display: 'flex', alignItems: 'center', gap: 10,
-      padding: '8px 10px',
-      borderRadius: 'var(--radius-sm)',
-      textDecoration: 'none', color: 'var(--text)', fontSize: 13,
-      transition: 'background 140ms ease',
-      minWidth: 0,
-    }}
-      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--slate-100)'; }}
-      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+    <Link
+      to={to}
+      className="hover-arrow"
+      style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '8px 10px',
+        borderRadius: 'var(--radius-sm)',
+        textDecoration: 'none', color: 'var(--text)', fontSize: 13,
+        transition: 'background 140ms ease, transform 180ms ease',
+        minWidth: 0,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = 'var(--slate-100)';
+        e.currentTarget.style.transform = 'translateX(3px)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent';
+        e.currentTarget.style.transform = 'translateX(0)';
+      }}
     >
       <span style={{
         width: 24, height: 24, borderRadius: 6,
@@ -588,8 +634,11 @@ function QuickLink({ to, icon, label }) {
         display: 'grid', placeItems: 'center',
         fontSize: 12, flexShrink: 0,
       }}>{icon}</span>
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
         {label}
+      </span>
+      <span className="nav-arrow" style={{ color: 'var(--slate-400)', fontSize: 12, flexShrink: 0 }}>
+        →
       </span>
     </Link>
   );
@@ -602,7 +651,7 @@ function EmptyState({ icon, title, body, actionLabel, actionHref }) {
       <p style={{ fontWeight: 600, fontSize: 15 }}>{title}</p>
       <p style={{ color: 'var(--text-muted)', fontSize: 13, marginTop: 4 }}>{body}</p>
       {actionLabel && actionHref && (
-        <Link to={actionHref} className="btn-primary" style={{
+        <Link to={actionHref} className="btn-primary hover-lift" style={{
           display: 'inline-block', marginTop: 16,
           padding: '8px 16px', borderRadius: 'var(--radius-sm)',
           textDecoration: 'none', fontSize: 13, fontWeight: 500,

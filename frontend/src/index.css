@@ -1011,3 +1011,189 @@ ul.stagger > li,
         0 0 0 7px rgba(59, 130, 246, 0.14);
     }
   }  
+
+/* ═══════════════════════════════════════════════════════════════
+   Dashboard vibe — animations, hovers, cascades
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Dashboard grid classes (moved from inline <style>) ─────── */
+.dash-ann-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  min-width: 0;
+}
+.dash-ann-item {
+  display: block;
+  min-width: 0;
+  text-decoration: none;
+  color: inherit;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.dash-ann-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.dash-ann-card-body {
+  font-size: 14px;
+  color: var(--slate-600);
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.55;
+}
+.dash-pinned-body {
+  font-size: 13px;
+  color: #78350f;
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+/* ── Keyframes ──────────────────────────────────────────────── */
+@keyframes iconPop {
+  0%   { transform: scale(1) rotate(0deg); }
+  40%  { transform: scale(1.18) rotate(-8deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+@keyframes arrowSlide {
+  from { transform: translateX(0); }
+  to   { transform: translateX(5px); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes pendingPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(180, 83, 9, 0.45); }
+  50%      { box-shadow: 0 0 0 8px rgba(180, 83, 9, 0); }
+}
+
+@keyframes greetingIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Card hover lift ───────────────────────────────────────── */
+.hover-lift {
+  transition:
+    transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+}
+.hover-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+}
+
+/* ── Icon pop on hover ─────────────────────────────────────── */
+.hover-icon-pop .stat-icon {
+  transition: transform 200ms var(--ease);
+}
+.hover-icon-pop:hover .stat-icon {
+  animation: iconPop 500ms var(--ease);
+}
+
+/* ── Arrow slide on hover ──────────────────────────────────── */
+.hover-arrow .nav-arrow {
+  display: inline-block;
+  transition: transform 200ms var(--ease);
+}
+.hover-arrow:hover .nav-arrow {
+  animation: arrowSlide 600ms ease-in-out infinite alternate;
+}
+
+/* ── Pinned banner shimmer on hover ────────────────────────── */
+.pinned-glow {
+  position: relative;
+  overflow: hidden;
+}
+.pinned-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.4) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  opacity: 0;
+  transition: opacity 300ms ease;
+  pointer-events: none;
+}
+.pinned-glow:hover::after {
+  opacity: 1;
+  animation: shimmer 2.4s linear infinite;
+}
+
+/* ── Pending review stat pulse when > 0 ───────────────────── */
+.highlight-pulse {
+  animation: pendingPulse 2.4s ease-in-out infinite;
+}
+
+/* ── Stagger cascade for dashboard lists ───────────────────── */
+.dash-recents.stagger > *,
+.dash-courses.stagger > *,
+.dash-ann-list.stagger > * {
+  animation: fade-up 480ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.dash-recents.stagger > *:nth-child(1),
+.dash-courses.stagger > *:nth-child(1),
+.dash-ann-list.stagger > *:nth-child(1) { animation-delay: 0ms; }
+.dash-recents.stagger > *:nth-child(2),
+.dash-courses.stagger > *:nth-child(2),
+.dash-ann-list.stagger > *:nth-child(2) { animation-delay: 60ms; }
+.dash-recents.stagger > *:nth-child(3),
+.dash-courses.stagger > *:nth-child(3),
+.dash-ann-list.stagger > *:nth-child(3) { animation-delay: 120ms; }
+.dash-recents.stagger > *:nth-child(4),
+.dash-courses.stagger > *:nth-child(4),
+.dash-ann-list.stagger > *:nth-child(4) { animation-delay: 180ms; }
+.dash-recents.stagger > *:nth-child(5),
+.dash-courses.stagger > *:nth-child(5) { animation-delay: 240ms; }
+.dash-recents.stagger > *:nth-child(6),
+.dash-courses.stagger > *:nth-child(6) { animation-delay: 300ms; }
+
+/* ── Accessibility ─────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .hover-lift:hover,
+  .hover-icon-pop:hover .stat-icon,
+  .hover-arrow:hover .nav-arrow,
+  .pinned-glow:hover::after,
+  .highlight-pulse,
+  .dash-recents.stagger > *,
+  .dash-courses.stagger > *,
+  .dash-ann-list.stagger > * {
+    animation: none !important;
+    transform: none !important;
+  }
+}  
