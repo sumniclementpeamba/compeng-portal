@@ -269,3 +269,18 @@ MEDIA_URL = (
     else "/media/"
 )
 MEDIA_ROOT = BASE_DIR / "media" 
+
+
+# ── Campus network CIDRs (optional, for IP-based soft flags) ──
+# Comma-separated CIDR ranges. Used to flag off-campus check-ins
+# as a soft signal — NOT a hard block, because mobile data is a
+# legitimate way for students to access the portal.
+#
+# Leave empty to skip the IP check entirely (default).
+# Add your campus Wi-Fi ranges once you know them, e.g.:
+#   CAMPUS_NETWORKS=10.0.0.0/8,192.168.1.0/24
+CAMPUS_NETWORKS = [
+    c.strip()
+    for c in os.environ.get("CAMPUS_NETWORKS", "").split(",")
+    if c.strip()
+]

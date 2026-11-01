@@ -26,6 +26,11 @@ const BLANK_FORM = {
   check_in_starts_minutes_before: 5,
   check_in_ends_minutes_after: 15,
   late_after_minutes: 10,
+  // GPS
+  latitude: '',
+  longitude: '',
+  geofence_radius_meters: 150,
+  require_location: true,
 };
 
 function computeTodayIndex() {
@@ -35,6 +40,13 @@ function computeTodayIndex() {
 
 function dayName(dayIndex) {
   return DAYS[dayIndex] || `Day ${dayIndex}`;
+}
+
+function formatCoord(n) {
+  if (n === null || n === undefined || n === '') return null;
+  const num = Number(n);
+  if (Number.isNaN(num)) return null;
+  return num.toFixed(5);
 }
 
 export default function Timetable() {
@@ -76,7 +88,6 @@ export default function Timetable() {
       if (!map[e.day_of_week]) map[e.day_of_week] = [];
       map[e.day_of_week].push(e);
     });
-    // Sort each day's entries by start_time
     Object.keys(map).forEach((key) => {
       map[key].sort((a, b) => (a.start_time > b.start_time ? 1 : -1));
     });
@@ -104,6 +115,10 @@ export default function Timetable() {
       check_in_starts_minutes_before: entry.check_in_starts_minutes_before,
       check_in_ends_minutes_after: entry.check_in_ends_minutes_after,
       late_after_minutes: entry.late_after_minutes,
+      latitude: entry.latitude ?? '',
+      longitude: entry.longitude ?? '',
+      geofence_radius_meters: entry.geofence_radius_meters ?? 150,
+      require_location: entry.require_location !== false,
     });
     setShowForm(true);
     setErr('');
@@ -133,6 +148,17 @@ export default function Timetable() {
           form.check_in_ends_minutes_after
         ),
         late_after_minutes: Number(form.late_after_minutes),
+        geofence_radius_meters: Number(form.geofence_radius_meters),
+        // Send null explicitly if the rep left coordinates blank —
+        // clears the geofence for that course.
+        latitude:
+          form.latitude === '' || form.latitude === null
+            ? null
+            : Number(form.latitude),
+        longitude:
+          form.longitude === '' || form.longitude === null
+            ? null
+            : Number(form.longitude),
       };
 
       if (editingId) {
@@ -178,7 +204,7 @@ export default function Timetable() {
         title="Timetable"
         subtitle={
           isRep
-            ? 'Set class times once — attendance windows open automatically.'
+            ? 'Set class times and classroom locations — attendance windows and GPS checks open automatically.'
             : 'Your weekly class schedule. Check-in opens automatically at each class time.'
         }
         actions={
@@ -366,7 +392,6 @@ export default function Timetable() {
                           key={e.id}
                           entry={e}
                           isFirst={i === 0}
-                          isLast={i === dayEntries.length - 1}
                           isRep={isRep}
                           onEdit={() => openEdit(e)}
                           onDelete={() => deleteEntry(e)}
@@ -398,19 +423,18 @@ export default function Timetable() {
                 <strong>5 minutes before</strong> class start time.
               </li>
               <li>
-                Students tap <strong>"I'm here"</strong> — records save
-                instantly.
+                Students tap <strong>"I'm here"</strong> on their own phone.
+              </li>
+              <li>
+                If <strong>classroom coordinates</strong> are set, students
+                must be within the geofence radius to check in.
               </li>
               <li>
                 Check-in closes <strong>15 minutes after</strong> class ends.
               </li>
               <li>
                 Late arrivals (after 10 minutes) are marked{' '}
-                <strong>Late</strong>, not Present.
-              </li>
-              <li>
-                No action needed from you — the system opens windows
-                automatically.
+                <strong>Late</strong>.
               </li>
               <li>
                 Only the admin can correct attendance records after check-in.
@@ -423,7 +447,13 @@ export default function Timetable() {
   );
 }
 
-function EntryRow({ entry, isFirst, isLast, isRep, onEdit, onDelete }) {
+function EntryRow({ entry, isFirst, isRep, onEdit, onDelete }) {
+  const hasGps =
+    entry.latitude !== null &&
+    entry.latitude !== undefined &&
+    entry.longitude !== null &&
+    entry.longitude !== undefined;
+
   return (
     <div
       style={{
@@ -469,6 +499,31 @@ function EntryRow({ entry, isFirst, isLast, isRep, onEdit, onDelete }) {
               {entry.course_title}
             </span>
           )}
+          {hasGps ? (
+            <span
+              className="badge badge-success"
+              style={{ fontSize: 10 }}
+              title={`GPS verified within ${entry.geofence_radius_meters}m`}
+            >
+              📍 GPS on
+            </span>
+          ) : entry.require_location ? (
+            <span
+              className="badge badge-warning"
+              style={{ fontSize: 10 }}
+              title="Coordinates not set — location check is disabled for this course"
+            >
+              📍 No coords
+            </span>
+          ) : (
+            <span
+              className="badge badge-neutral"
+              style={{ fontSize: 10 }}
+              title="GPS check disabled"
+            >
+              📍 Off
+            </span>
+          )}
         </div>
         <div
           style={{
@@ -486,6 +541,12 @@ function EntryRow({ entry, isFirst, isLast, isRep, onEdit, onDelete }) {
           </span>
           {entry.room && <span>📍 {entry.room}</span>}
           {entry.lecturer && <span>👤 {entry.lecturer}</span>}
+          {hasGps && (
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+              {formatCoord(entry.latitude)}, {formatCoord(entry.longitude)} ·{' '}
+              {entry.geofence_radius_meters}m
+            </span>
+          )}
         </div>
       </div>
 
@@ -528,11 +589,72 @@ function EntryRow({ entry, isFirst, isLast, isRep, onEdit, onDelete }) {
 }
 
 function TimetableForm({ form, setForm, editing, busy, err, onSubmit, onCancel }) {
+  const [locating, setLocating] = useState(false);
+  const [locError, setLocError] = useState('');
+  const [locAccuracy, setLocAccuracy] = useState(null);
+
   const set = (k) => (e) => {
     const v =
-      e.target.type === 'number' ? Number(e.target.value) : e.target.value;
+      e.target.type === 'number'
+        ? Number(e.target.value)
+        : e.target.type === 'checkbox'
+        ? e.target.checked
+        : e.target.value;
     setForm({ ...form, [k]: v });
   };
+
+  function useMyLocation() {
+    setLocating(true);
+    setLocError('');
+    setLocAccuracy(null);
+
+    if (!navigator.geolocation) {
+      setLocError('Geolocation is not supported by this browser.');
+      setLocating(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setForm((prev) => ({
+          ...prev,
+          latitude: pos.coords.latitude.toFixed(6),
+          longitude: pos.coords.longitude.toFixed(6),
+        }));
+        setLocAccuracy(Math.round(pos.coords.accuracy));
+        setLocating(false);
+      },
+      (err) => {
+        const msg =
+          err.code === err.PERMISSION_DENIED
+            ? 'Location permission denied. Allow it in your browser settings and try again.'
+            : err.code === err.POSITION_UNAVAILABLE
+            ? 'Location unavailable. Try again in an open area or near a window.'
+            : err.code === err.TIMEOUT
+            ? 'Location timed out. Try again.'
+            : err.message || 'Could not get location.';
+        setLocError(msg);
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
+
+  function clearLocation() {
+    setForm((prev) => ({
+      ...prev,
+      latitude: '',
+      longitude: '',
+    }));
+    setLocAccuracy(null);
+    setLocError('');
+  }
+
+  const hasCoords =
+    form.latitude !== '' &&
+    form.latitude !== null &&
+    form.longitude !== '' &&
+    form.longitude !== null;
 
   return (
     <form
@@ -574,6 +696,7 @@ function TimetableForm({ form, setForm, editing, busy, err, onSubmit, onCancel }
         </button>
       </div>
 
+      {/* Basic course info */}
       <div
         style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}
       >
@@ -669,6 +792,7 @@ function TimetableForm({ form, setForm, editing, busy, err, onSubmit, onCancel }
         </label>
       </div>
 
+      {/* Check-in window settings */}
       <details
         style={{
           padding: 12,
@@ -685,7 +809,7 @@ function TimetableForm({ form, setForm, editing, busy, err, onSubmit, onCancel }
             color: 'var(--slate-700)',
           }}
         >
-          Check-in window settings (advanced)
+          Check-in window settings
         </summary>
         <div
           style={{
@@ -729,23 +853,222 @@ function TimetableForm({ form, setForm, editing, busy, err, onSubmit, onCancel }
             />
           </label>
         </div>
-        <p
+      </details>
+
+      {/* Classroom location (GPS) */}
+      <details
+        open={hasCoords || editing}
+        style={{
+          padding: 12,
+          background: 'var(--slate-50)',
+          borderRadius: 'var(--radius-sm)',
+          border: '1px solid var(--border)',
+        }}
+      >
+        <summary
           style={{
-            fontSize: 12,
-            color: 'var(--text-muted)',
-            marginTop: 10,
-            marginBottom: 0,
-            lineHeight: 1.55,
+            fontSize: 13,
+            fontWeight: 600,
+            cursor: 'pointer',
+            color: 'var(--slate-700)',
           }}
         >
-          Check-in opens{' '}
-          <strong>{form.check_in_starts_minutes_before} min</strong> before
-          class start, closes{' '}
-          <strong>{form.check_in_ends_minutes_after} min</strong> after class
-          end. Anyone checking in more than{' '}
-          <strong>{form.late_after_minutes} min</strong> after start is marked{' '}
-          <strong>Late</strong>.
-        </p>
+          Classroom location (GPS)
+          {hasCoords && (
+            <span
+              className="badge badge-success"
+              style={{ fontSize: 10, marginLeft: 8 }}
+            >
+              set
+            </span>
+          )}
+          {!hasCoords && form.require_location && (
+            <span
+              className="badge badge-warning"
+              style={{ fontSize: 10, marginLeft: 8 }}
+            >
+              not set
+            </span>
+          )}
+        </summary>
+
+        <div style={{ marginTop: 12, display: 'grid', gap: 12 }}>
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={form.require_location}
+              onChange={set('require_location')}
+              style={{ width: 18, height: 18 }}
+            />
+            Require GPS verification for check-in
+          </label>
+          <p
+            style={{
+              fontSize: 12,
+              color: 'var(--text-muted)',
+              margin: 0,
+              lineHeight: 1.55,
+            }}
+          >
+            {form.require_location
+              ? hasCoords
+                ? 'Students must be within the radius below to check in. Outside check-ins are rejected.'
+                : 'No coordinates set yet. GPS is currently NOT enforced — students can check in from anywhere. Click "Use my current location" below while standing in the classroom.'
+              : 'GPS check is disabled for this course. Students can check in from anywhere.'}
+          </p>
+
+          {form.require_location && (
+            <>
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={useMyLocation}
+                  disabled={locating}
+                  className="btn-primary"
+                  style={{ padding: '8px 14px', fontSize: 13 }}
+                >
+                  {locating ? '📍 Getting location…' : '📍 Use my current location'}
+                </button>
+                {hasCoords && (
+                  <button
+                    type="button"
+                    onClick={clearLocation}
+                    style={{
+                      padding: '8px 14px',
+                      fontSize: 13,
+                      background: '#fff',
+                      border: '1px solid var(--border-strong)',
+                      color: 'var(--slate-700)',
+                      borderRadius: 'var(--radius-sm)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {locError && (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    background: 'var(--danger-bg)',
+                    color: 'var(--danger)',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: 12,
+                  }}
+                >
+                  {locError}
+                </div>
+              )}
+
+              {locAccuracy !== null && (
+                <div
+                  style={{
+                    padding: '8px 12px',
+                    background:
+                      locAccuracy <= 50
+                        ? 'var(--success-bg)'
+                        : locAccuracy <= 150
+                        ? 'var(--warning-bg)'
+                        : 'var(--danger-bg)',
+                    color:
+                      locAccuracy <= 50
+                        ? 'var(--success)'
+                        : locAccuracy <= 150
+                        ? 'var(--warning)'
+                        : 'var(--danger)',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: 12,
+                  }}
+                >
+                  Location accuracy: ±{locAccuracy}m —{' '}
+                  {locAccuracy <= 50
+                    ? 'excellent'
+                    : locAccuracy <= 150
+                    ? 'good'
+                    : 'poor — try again near a window'}
+                </div>
+              )}
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 1fr 1fr',
+                  gap: 10,
+                }}
+              >
+                <label style={LBL}>
+                  Latitude
+                  <input
+                    value={form.latitude}
+                    onChange={set('latitude')}
+                    placeholder="5.650500"
+                    style={{
+                      width: '100%',
+                      marginTop: 4,
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 13,
+                    }}
+                  />
+                </label>
+                <label style={LBL}>
+                  Longitude
+                  <input
+                    value={form.longitude}
+                    onChange={set('longitude')}
+                    placeholder="-0.187000"
+                    style={{
+                      width: '100%',
+                      marginTop: 4,
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 13,
+                    }}
+                  />
+                </label>
+                <label style={LBL}>
+                  Radius (m)
+                  <input
+                    type="number"
+                    min={20}
+                    max={1000}
+                    value={form.geofence_radius_meters}
+                    onChange={set('geofence_radius_meters')}
+                    style={{ width: '100%', marginTop: 4 }}
+                  />
+                </label>
+              </div>
+
+              <p
+                style={{
+                  fontSize: 11,
+                  color: 'var(--text-muted)',
+                  margin: 0,
+                  lineHeight: 1.5,
+                }}
+              >
+                150m is a safe default for indoor GPS. If students in the
+                back of the room can't check in, increase it to 200–250m.
+              </p>
+            </>
+          )}
+        </div>
       </details>
 
       {err && <div style={{ color: 'var(--danger)', fontSize: 13 }}>{err}</div>}

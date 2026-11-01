@@ -1,6 +1,7 @@
 import csv
 from datetime import datetime, timedelta
 
+from django.conf import settings
 from django.db import IntegrityError
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
@@ -12,7 +13,10 @@ from rest_framework.views import APIView
 from accounts.models import User
 from accounts.permissions import CanReview, IsAdminRole, IsClassRep, role_of
 from audit.models import log
-from .models import AttendanceRecord, AttendanceSession, TimetableEntry
+from .geo import evaluate_geofence, get_client_ip, is_campus_ip
+from .models import (
+    AttendanceRecord, AttendanceSession, DeviceRecord, TimetableEntry,
+)
 from .serializers import (
     AttendanceRecordSerializer,
     AttendanceSessionDetailSerializer,
@@ -33,10 +37,10 @@ from .semester import (
 # Helpers
 # ─────────────────────────────────────────────────────────────
 def _is_frozen(session):
-    """A session 'freezes' once its check-in window closes.
+    """True once the check-in window has already closed.
 
-    Only used to prevent reopening a closed manual session. Attendance
-    marking is admin-only regardless of freeze state.
+    Used only to prevent reopening a closed session. Attendance marking
+    is admin-only regardless of freeze state.
     """
     if not session.check_in_closes_at:
         return False
@@ -51,6 +55,16 @@ def _eligible_users():
     created via createsuperuser without a membership are excluded.
     """
     return User.objects.filter(membership__isnull=False)
+
+
+def _compute_late_threshold(session):
+    if session.late_after_at:
+        return session.late_after_at
+    if session.check_in_opens_at:
+        return session.check_in_opens_at + timedelta(
+            minutes=session.late_after_minutes
+        )
+    return None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -100,6 +114,10 @@ def ensure_todays_sessions_for_user(user):
                     minutes=entry.late_after_minutes
                 ),
                 "late_after_minutes": entry.late_after_minutes,
+                "classroom_lat": entry.latitude,
+                "classroom_lng": entry.longitude,
+                "geofence_radius_meters": entry.geofence_radius_meters,
+                "require_location": entry.require_location,
                 "created_by": entry.created_by,
             },
         )
@@ -124,16 +142,6 @@ def ensure_todays_sessions_for_user(user):
         active_ids.append(session.id)
 
     return active_ids
-
-
-def _compute_late_threshold(session):
-    if session.late_after_at:
-        return session.late_after_at
-    if session.check_in_opens_at:
-        return session.check_in_opens_at + timedelta(
-            minutes=session.late_after_minutes
-        )
-    return None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -189,6 +197,7 @@ class TimetableEntryDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 # ─────────────────────────────────────────────────────────────
 # Sessions — list/create
+# Reps create sessions; admins cannot create (read-only workflow)
 # ─────────────────────────────────────────────────────────────
 class AttendanceSessionListCreateView(generics.ListCreateAPIView):
     serializer_class = AttendanceSessionSerializer
@@ -214,9 +223,24 @@ class AttendanceSessionListCreateView(generics.ListCreateAPIView):
 
         session = serializer.save(created_by=request.user)
 
-        # Auto-open check-in for manual sessions. Reps can't mark attendance
-        # themselves, so the session must be immediately usable by students
-        # (including the rep) for self check-in.
+        # Snapshot classroom coordinates from the timetable entry.
+        # Manual sessions (no timetable_entry) keep the default nulls —
+        # they'll have no geofence, so check-ins succeed without location.
+        if session.timetable_entry:
+            session.classroom_lat = session.timetable_entry.latitude
+            session.classroom_lng = session.timetable_entry.longitude
+            session.geofence_radius_meters = (
+                session.timetable_entry.geofence_radius_meters
+            )
+            session.require_location = session.timetable_entry.require_location
+            session.save(update_fields=[
+                "classroom_lat", "classroom_lng",
+                "geofence_radius_meters", "require_location",
+            ])
+
+        # Auto-open check-in for manual sessions. Reps can't mark
+        # attendance themselves, so the session must be immediately
+        # usable by students (including the rep) for self check-in.
         if session.self_check_in and not session.timetable_entry:
             now = timezone.now()
             session.check_in_opens_at = now
@@ -266,11 +290,9 @@ class AttendanceSessionListCreateView(generics.ListCreateAPIView):
 
 
 class AttendanceSessionDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """Readable by rep + admin. Editable by rep + admin.
-
-    Metadata changes and cancellations don't affect attendance records
-    directly, so no freeze gate applies here. Marking records is
-    admin-only via AttendanceMarkView.
+    """Readable + editable by rep and admin. Marking records is
+    admin-only via AttendanceMarkView; metadata changes and
+    cancellations don't affect records directly.
     """
 
     serializer_class = AttendanceSessionDetailSerializer
@@ -375,11 +397,31 @@ class AttendanceCloseCheckInView(APIView):
 
 # ─────────────────────────────────────────────────────────────
 # Self check-in — students AND reps (anyone with a record)
+# Now with GPS + device fingerprint verification
 # ─────────────────────────────────────────────────────────────
 class AttendanceSelfCheckInView(APIView):
+    """Student self check-in with GPS + device fingerprint verification.
+
+    Accepts JSON:
+      {
+        "gps": {"lat": 5.6505, "lng": -0.187, "accuracy": 35},
+        "fingerprint": "a3f9c2d1b7e4e5f6"
+      }
+
+    Both fields optional, but omitting them produces flags:
+      - no gps         → flag "no_gps"
+      - no fingerprint → allows (duplicate-device check skipped)
+
+    Responses:
+      200 {ok: true, status: "present"|"late", flags: [...]}
+      403 {detail: "...", reason: "outside_geofence"|"duplicate_device"}
+      400 {detail: "..."} for bad state (window closed, already marked, etc.)
+    """
+
     def post(self, request, pk):
         session = get_object_or_404(AttendanceSession, pk=pk)
 
+        # ── State checks ────────────────────────────────────
         if session.cancelled:
             return Response(
                 {"detail": "This session was cancelled by the course rep."},
@@ -395,16 +437,98 @@ class AttendanceSelfCheckInView(APIView):
         if not session.check_in_open:
             if not session.check_in_opens_at:
                 return Response(
-                    {"detail": "Check-in has not been opened yet."}, status=400,
+                    {"detail": "Check-in has not been opened yet."},
+                    status=400,
                 )
             if now >= session.check_in_closes_at:
                 return Response(
-                    {"detail": "The check-in window has closed."}, status=400,
+                    {"detail": "The check-in window has closed."},
+                    status=400,
                 )
             return Response(
-                {"detail": "Check-in is not open right now."}, status=400,
+                {"detail": "Check-in is not open right now."},
+                status=400,
             )
 
+        # ── Parse GPS payload ──────────────────────────────
+        gps = request.data.get("gps") or {}
+        try:
+            student_lat = (
+                float(gps["lat"]) if gps.get("lat") is not None else None
+            )
+            student_lng = (
+                float(gps["lng"]) if gps.get("lng") is not None else None
+            )
+            student_accuracy = (
+                float(gps["accuracy"])
+                if gps.get("accuracy") is not None
+                else None
+            )
+        except (TypeError, ValueError, KeyError):
+            return Response({"detail": "Invalid GPS data."}, status=400)
+
+        fingerprint = (request.data.get("fingerprint") or "").strip()[:64]
+
+        # ── Device fingerprint duplicate check (fail fast) ──
+        if fingerprint:
+            conflict = (
+                session.device_records
+                .exclude(user=request.user)
+                .filter(fingerprint=fingerprint)
+                .exists()
+            )
+            if conflict:
+                return Response(
+                    {
+                        "detail": "This device has already checked in "
+                                  "another student for this session.",
+                        "reason": "duplicate_device",
+                    },
+                    status=403,
+                )
+
+        # ── Geofence evaluation ────────────────────────────
+        flags = []
+        distance = None
+        geofence_result = "no_geofence"
+
+        if session.require_location:
+            geofence_result, distance = evaluate_geofence(
+                student_lat, student_lng, student_accuracy,
+                session.classroom_lat, session.classroom_lng,
+                session.geofence_radius_meters,
+            )
+
+            if geofence_result == "outside":
+                return Response(
+                    {
+                        "detail": "You appear to be outside the classroom. "
+                                  "If this is wrong, tap 'Request review' "
+                                  "to message your course rep.",
+                        "reason": "outside_geofence",
+                        "distance_meters": (
+                            round(distance, 1) if distance else None
+                        ),
+                        "radius_meters": session.geofence_radius_meters,
+                    },
+                    status=403,
+                )
+            if geofence_result == "low_accuracy":
+                flags.append("low_accuracy")
+            elif geofence_result == "uncertain":
+                flags.append("uncertain_geofence")
+            elif geofence_result == "no_gps":
+                flags.append("no_gps")
+            # 'inside' and 'no_geofence' → no flag
+
+        # ── IP consistency (soft flag only) ────────────────
+        campus_networks = getattr(settings, "CAMPUS_NETWORKS", [])
+        client_ip = get_client_ip(request)
+        if campus_networks and client_ip:
+            if not is_campus_ip(client_ip, campus_networks):
+                flags.append("off_campus_network")
+
+        # ── Get the attendance record ──────────────────────
         record, _ = AttendanceRecord.objects.get_or_create(
             session=session,
             user=request.user,
@@ -416,8 +540,9 @@ class AttendanceSelfCheckInView(APIView):
 
         if record.status != AttendanceRecord.STATUS_ABSENT:
             return Response(
-                {"detail": f"Your record is already marked '{record.status}'. "
-                           "Contact the admin if this is wrong."},
+                {"detail": f"Your record is already marked "
+                           f"'{record.status}'. Contact the admin if "
+                           f"this is wrong."},
                 status=400,
             )
         if record.marked_by_id and record.marked_by_id != request.user.pk:
@@ -426,6 +551,25 @@ class AttendanceSelfCheckInView(APIView):
                 status=400,
             )
 
+        # ── Register device fingerprint (DB-enforced uniqueness) ──
+        if fingerprint:
+            try:
+                DeviceRecord.objects.create(
+                    fingerprint=fingerprint,
+                    session=session,
+                    user=request.user,
+                )
+            except IntegrityError:
+                return Response(
+                    {
+                        "detail": "This device has already checked in "
+                                  "for this session.",
+                        "reason": "duplicate_device",
+                    },
+                    status=403,
+                )
+
+        # ── Determine present vs late ──────────────────────
         late_threshold = _compute_late_threshold(session)
         new_status = (
             AttendanceRecord.STATUS_LATE
@@ -433,27 +577,33 @@ class AttendanceSelfCheckInView(APIView):
             else AttendanceRecord.STATUS_PRESENT
         )
 
+        # ── Persist ────────────────────────────────────────
         record.status = new_status
         record.check_in_method = AttendanceRecord.METHOD_SELF
         record.marked_by = request.user
-        try:
-            record.save(update_fields=[
-                "status", "check_in_method", "marked_by", "marked_at",
-            ])
-        except IntegrityError:
-            return Response(
-                {"detail": "You have already checked in for this session."},
-                status=400,
-            )
+        record.check_in_gps_lat = student_lat
+        record.check_in_gps_lng = student_lng
+        record.check_in_gps_accuracy = student_accuracy
+        record.check_in_ip = client_ip
+        record.check_in_flags = flags
+        record.needs_review = bool(flags)
+        record.save(update_fields=[
+            "status", "check_in_method", "marked_by", "marked_at",
+            "check_in_gps_lat", "check_in_gps_lng", "check_in_gps_accuracy",
+            "check_in_ip", "check_in_flags", "needs_review",
+        ])
 
         log(
             request.user, "attendance.self_check_in", session,
             title=session.title, status=new_status,
+            flags=flags, distance=distance,
         )
 
         return Response({
             "ok": True,
             "status": new_status,
+            "flags": flags,
+            "needs_review": bool(flags),
             "record": AttendanceRecordSerializer(record).data,
         })
 
@@ -726,7 +876,6 @@ class SemesterAttendanceSummaryView(APIView):
         expected_total = expected_sessions_total(config)
         expected_to_date = expected_sessions_total(config, upto_today=True)
 
-        # Include everyone with a membership — students + reps + admins-with-rep
         students = (
             User.objects
             .filter(membership__isnull=False)
@@ -859,7 +1008,6 @@ class AttendanceExportView(APIView):
             "Attendance % (Semester)",
         ])
 
-        # Include everyone with a membership
         students = (
             User.objects
             .filter(membership__isnull=False)
@@ -927,3 +1075,62 @@ class AttendanceExportView(APIView):
         )
 
         return response 
+    
+# ─────────────────────────────────────────────────────────────
+# Review a flagged check-in — rep or admin
+# ─────────────────────────────────────────────────────────────
+class AttendanceRecordReviewView(APIView):
+    """Approve or reject a flagged self check-in.
+
+    Approve: clears needs_review, keeps current status (present/late).
+    Reject:  clears needs_review, marks the student absent.
+
+    Reps and admins can review. Reps CANNOT use this to mark students
+    present who weren't flagged — the endpoint refuses to touch clean
+    records. That keeps the guard rail: reps only handle the review
+    queue, admins keep full marking control.
+    """
+
+    permission_classes = [CanReview]
+
+    def post(self, request, pk):
+        record = get_object_or_404(AttendanceRecord, pk=pk)
+
+        if not record.needs_review:
+            return Response(
+                {"detail": "This record is not flagged for review."},
+                status=400,
+            )
+
+        decision = request.data.get("decision")
+        note = (request.data.get("note") or "").strip()
+
+        if decision not in ("approve", "reject"):
+            return Response(
+                {"detail": "decision must be 'approve' or 'reject'."},
+                status=400,
+            )
+
+        if decision == "approve":
+            record.needs_review = False
+            record.note = note or "Approved after manual review"
+        else:
+            record.status = AttendanceRecord.STATUS_ABSENT
+            record.needs_review = False
+            record.note = note or "Rejected — marked absent after review"
+            record.check_in_method = AttendanceRecord.METHOD_REP
+
+        record.marked_by = request.user
+        record.save(update_fields=[
+            "status", "needs_review", "note", "marked_by", "marked_at",
+            "check_in_method",
+        ])
+
+        log(
+            request.user, f"attendance.check_in_{decision}d",
+            record.session,
+            record_id=record.id, user_id=record.user_id,
+            flags=record.check_in_flags,
+        )
+
+        return Response(AttendanceRecordSerializer(record).data)    

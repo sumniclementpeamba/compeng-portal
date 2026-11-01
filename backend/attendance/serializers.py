@@ -13,10 +13,17 @@ class TimetableEntrySerializer(serializers.ModelSerializer):
     class Meta:
         model = TimetableEntry
         fields = (
-            "id", "course_code", "course_title", "day_of_week", "day_label",
-            "start_time", "end_time", "room", "lecturer", "course_display",
-            "check_in_starts_minutes_before", "check_in_ends_minutes_after",
-            "late_after_minutes", "active", "created_at",
+            "id", "course_code", "course_title",
+            "day_of_week", "day_label",
+            "start_time", "end_time",
+            "room", "lecturer", "course_display",
+            "check_in_starts_minutes_before",
+            "check_in_ends_minutes_after",
+            "late_after_minutes",
+            # GPS config
+            "latitude", "longitude",
+            "geofence_radius_meters", "require_location",
+            "active", "created_at",
         )
         read_only_fields = ("id", "created_at", "day_label", "course_display")
 
@@ -41,18 +48,26 @@ class TimetableEntrySerializer(serializers.ModelSerializer):
 class AttendanceRecordSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source="user.id", read_only=True)
     user_name = serializers.SerializerMethodField()
-    reference_number = serializers.CharField(source="user.reference_number", read_only=True)
+    reference_number = serializers.CharField(
+        source="user.reference_number", read_only=True
+    )
     avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = AttendanceRecord
         fields = (
             "id", "user_id", "user_name", "reference_number",
-            "avatar_url", "status", "note", "check_in_method", "marked_at",
+            "avatar_url", "status", "note",
+            "check_in_method", "marked_at",
+            # GPS + verification data
+            "check_in_gps_lat", "check_in_gps_lng", "check_in_gps_accuracy",
+            "check_in_ip", "check_in_flags", "needs_review",
         )
         read_only_fields = (
             "id", "user_id", "user_name", "reference_number",
             "avatar_url", "check_in_method", "marked_at",
+            "check_in_gps_lat", "check_in_gps_lng", "check_in_gps_accuracy",
+            "check_in_ip", "check_in_flags", "needs_review",
         )
 
     def get_user_name(self, obj):
@@ -75,6 +90,7 @@ class AttendanceSessionSerializer(serializers.ModelSerializer):
     absent_count = serializers.SerializerMethodField()
     late_count = serializers.SerializerMethodField()
     self_check_in_count = serializers.SerializerMethodField()
+    needs_review_count = serializers.SerializerMethodField()
     check_in_open = serializers.ReadOnlyField()
 
     class Meta:
@@ -82,20 +98,28 @@ class AttendanceSessionSerializer(serializers.ModelSerializer):
         fields = (
             "id", "title", "date", "course_name", "notes",
             "timetable_entry", "timetable_course",
-            "self_check_in", "check_in_opens_at", "check_in_closes_at",
+            "self_check_in",
+            "check_in_opens_at", "check_in_closes_at",
             "late_after_at", "late_after_minutes",
-            "check_in_window_minutes", "cancelled", "check_in_open",
+            "check_in_window_minutes", "cancelled",
+            "check_in_open",
+            # GPS snapshot
+            "classroom_lat", "classroom_lng",
+            "geofence_radius_meters", "require_location",
+            # Meta
             "created_by", "created_by_name", "created_at",
             "record_count", "present_count", "absent_count",
-            "late_count", "self_check_in_count",
+            "late_count", "self_check_in_count", "needs_review_count",
         )
         read_only_fields = (
             "id", "created_by", "created_by_name", "created_at",
             "timetable_entry", "timetable_course",
             "check_in_opens_at", "check_in_closes_at", "late_after_at",
             "check_in_open",
+            "classroom_lat", "classroom_lng",
+            "geofence_radius_meters", "require_location",
             "record_count", "present_count", "absent_count",
-            "late_count", "self_check_in_count",
+            "late_count", "self_check_in_count", "needs_review_count",
         )
 
     def get_created_by_name(self, obj):
@@ -123,9 +147,13 @@ class AttendanceSessionSerializer(serializers.ModelSerializer):
     def get_self_check_in_count(self, obj):
         return obj.records.filter(check_in_method="self").count()
 
+    def get_needs_review_count(self, obj):
+        """Number of check-ins on this session waiting for rep review."""
+        return obj.records.filter(needs_review=True).count()
+
 
 class AttendanceSessionDetailSerializer(AttendanceSessionSerializer):
     records = AttendanceRecordSerializer(many=True, read_only=True)
 
     class Meta(AttendanceSessionSerializer.Meta):
-        fields = AttendanceSessionSerializer.Meta.fields + ("records",)  
+        fields = AttendanceSessionSerializer.Meta.fields + ("records",) 

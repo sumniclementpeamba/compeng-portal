@@ -4,6 +4,7 @@ from .views import (
     AttendanceCancelSessionView,
     AttendanceCloseCheckInView,
     AttendanceExportView,
+    AttendanceRecordReviewView,
     AttendanceMarkView,
     AttendanceOpenCheckInView,
     AttendanceSelfCheckInView,
@@ -39,4 +40,5 @@ urlpatterns = [
     # Admin semester view + export
     path("semester/summary/", SemesterAttendanceSummaryView.as_view()),
     path("export/", AttendanceExportView.as_view()),
+        path("records/<int:pk>/review/", AttendanceRecordReviewView.as_view()),
 ] 

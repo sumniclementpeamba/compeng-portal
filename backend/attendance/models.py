@@ -33,6 +33,18 @@ class TimetableEntry(models.Model):
     check_in_ends_minutes_after = models.PositiveIntegerField(default=15)
     late_after_minutes = models.PositiveIntegerField(default=10)
 
+    # ── Classroom location for GPS verification ─────────────
+    # When require_location is True, students must check in from
+    # within geofence_radius_meters of (latitude, longitude).
+    # When both coordinates are None, GPS is effectively disabled
+    # for this course even if require_location is True — the
+    # session just won't get a geofence and check-ins will succeed
+    # without a location check.
+    latitude = models.FloatField(null=True, blank=True)
+    longitude = models.FloatField(null=True, blank=True)
+    geofence_radius_meters = models.PositiveIntegerField(default=150)
+    require_location = models.BooleanField(default=True)
+
     active = models.BooleanField(default=True)
 
     created_by = models.ForeignKey(
@@ -47,7 +59,10 @@ class TimetableEntry(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.get_day_of_week_display()} {self.start_time}-{self.end_time} · {self.course_code}"
+        return (
+            f"{self.get_day_of_week_display()} "
+            f"{self.start_time}-{self.end_time} · {self.course_code}"
+        )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -81,6 +96,16 @@ class AttendanceSession(models.Model):
     late_after_minutes = models.PositiveIntegerField(default=5)
 
     check_in_window_minutes = models.PositiveIntegerField(default=15)
+
+    # ── Snapshot of classroom location at session-creation time ──
+    # Copied from timetable_entry so that later edits to the timetable
+    # don't change where past sessions "were". A session created before
+    # GPS support will have these as None — no geofence, check-ins
+    # succeed without a location check.
+    classroom_lat = models.FloatField(null=True, blank=True)
+    classroom_lng = models.FloatField(null=True, blank=True)
+    geofence_radius_meters = models.PositiveIntegerField(default=150)
+    require_location = models.BooleanField(default=True)
 
     # Set to True by the rep if class was cancelled.
     cancelled = models.BooleanField(default=False)
@@ -163,9 +188,65 @@ class AttendanceRecord(models.Model):
     )
     marked_at = models.DateTimeField(auto_now=True)
 
+    # ── GPS + verification data captured at check-in time ────
+    # These are None for records created by the system (auto) or by
+    # the rep marking attendance manually. They're only populated when
+    # a student uses self check-in, so the rep can later audit "where
+    # was this student when they checked in?"
+    check_in_gps_lat = models.FloatField(null=True, blank=True)
+    check_in_gps_lng = models.FloatField(null=True, blank=True)
+    check_in_gps_accuracy = models.FloatField(null=True, blank=True)
+    check_in_ip = models.GenericIPAddressField(null=True, blank=True)
+
+    # Flags set by the geofence / IP / device checks at check-in time.
+    # Possible values:
+    #   "no_gps"             — student's browser gave no coordinates
+    #   "low_accuracy"       — GPS accuracy > 300m, reading untrustworthy
+    #   "uncertain_geofence" — GPS said student is within ±accuracy of the boundary
+    #   "off_campus_network" — IP not in CAMPUS_NETWORKS (soft flag only)
+    check_in_flags = models.JSONField(default=list, blank=True)
+
+    # True if the record has any flags — this is what drives the
+    # "needs review" red badge in the rep's session editor.
+    needs_review = models.BooleanField(default=False)
+
     class Meta:
         unique_together = ("session", "user")
         ordering = ["user__first_name", "user__username"]
 
     def __str__(self):
-        return f"{self.user.username} · {self.session.title} · {self.status}" 
+        return f"{self.user.username} · {self.session.title} · {self.status}"
+
+
+# ─────────────────────────────────────────────────────────────
+# Device record — one fingerprint per session
+# ─────────────────────────────────────────────────────────────
+class DeviceRecord(models.Model):
+    """One row per (device fingerprint, session) pair.
+
+    The unique constraint below is the real enforcement: even under
+    concurrent check-ins, the DB will refuse a second student using
+    the same fingerprint for the same session. This is what blocks
+    "one person checking in five friends on their phone."
+
+    Fingerprints are computed client-side from public browser
+    characteristics (screen size, canvas hash, timezone, etc.) — no
+    sensor or permission is required on the device.
+    """
+
+    fingerprint = models.CharField(max_length=64, db_index=True)
+    session = models.ForeignKey(
+        AttendanceSession, on_delete=models.CASCADE,
+        related_name="device_records",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("fingerprint", "session")
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.fingerprint[:8]} → {self.user.username}" 
