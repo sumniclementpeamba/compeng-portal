@@ -941,3 +941,40 @@ ul.stagger > li,
       right: 6px;
     }
   }
+
+
+/* ═══════════════════════════════════════════════════════════════
+   Members grid — safe columns at any width
+   ═══════════════════════════════════════════════════════════════ */
+
+   .members-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr));
+  }
+  .members-grid > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+  
+  @media (max-width: 640px) {
+    .members-grid {
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+  }
+  
+  /* Member card internal safety */
+  .member-card {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+  .member-card .member-title,
+  .member-card .member-sub,
+  .member-card .member-email {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }  
