@@ -4,6 +4,7 @@ import { api, apiUrl, getToken } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { PageHeader, StatCard, EmptyState } from '../components/PageUI';
 
+
 const ACTION_META = {
   'resource.created':          { icon: '📤', verb: 'Published',                 accent: 'var(--brand)' },
   'resource.approved':         { icon: '✅', verb: 'Approved',                  accent: 'var(--success)' },
@@ -12,22 +13,24 @@ const ACTION_META = {
   'member.role_changed':       { icon: '👤', verb: 'Changed role of',           accent: '#7c3aed' },
   'members.csv_imported':      { icon: '📋', verb: 'Imported class list',       accent: 'var(--brand)' },
   'members.passwords_reset':   { icon: '🔐', verb: 'Reset passwords for',       accent: 'var(--warning)' },
+  'attendance.export_downloaded': { icon: '📥', verb: 'Downloaded attendance report', accent: 'var(--brand)' },
 };
 
 function actionMeta(action) {
   return ACTION_META[action] || { icon: '•', verb: action, accent: 'var(--slate-500)' };
 }
 
+
 // ═════════════════════════════════════════════════════════════
-// Main page — role-aware tabs
+// MAIN PAGE — role-aware tabs
 // ═════════════════════════════════════════════════════════════
 export default function Management() {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [tab, setTab] = useState('pending');
 
-  // Guard: if somehow tab === 'audit' while not admin (stale state, deep link),
-  // fall back to 'pending' silently.
+  // Guard: if tab === 'audit' but user isn't admin (stale state, deep link),
+  // silently fall back to 'pending'.
   const safeTab = tab === 'audit' && !isAdmin ? 'pending' : tab;
 
   return (
@@ -63,6 +66,7 @@ export default function Management() {
   );
 }
 
+
 function TabButton({ active, onClick, children }) {
   return (
     <button
@@ -87,8 +91,9 @@ function TabButton({ active, onClick, children }) {
   );
 }
 
+
 // ═════════════════════════════════════════════════════════════
-// Pending approvals (rep + admin)
+// PENDING APPROVALS
 // ═════════════════════════════════════════════════════════════
 function PendingPanel() {
   const [pending, setPending] = useState([]);
@@ -245,8 +250,9 @@ function PendingPanel() {
   );
 }
 
+
 // ═════════════════════════════════════════════════════════════
-// Audit log (admin only)
+// AUDIT LOG (admin only)
 // ═════════════════════════════════════════════════════════════
 function AuditPanel() {
   const [entries, setEntries] = useState([]);
@@ -333,6 +339,7 @@ function AuditPanel() {
     </div>
   );
 }
+
 
 function AuditRow({ entry }) {
   const meta = actionMeta(entry.action);
@@ -427,8 +434,9 @@ function AuditRow({ entry }) {
   );
 }
 
+
 // ═════════════════════════════════════════════════════════════
-// Members (rep + admin; CSV import admin only)
+// MEMBERS
 // ═════════════════════════════════════════════════════════════
 function MembersPanel() {
   const { user: currentUser } = useAuth();
@@ -456,7 +464,9 @@ function MembersPanel() {
       if (roleFilter) params.set('role', roleFilter);
       const qs = params.toString();
       const d = await api.get(`/members/${qs ? '?' + qs : ''}`);
-      setMembers(d.results || []);
+      // Handle both shapes: flat array (no pagination) OR {results: [...]}
+      const list = Array.isArray(d) ? d : (d.results || []);
+      setMembers(list);
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -594,11 +604,11 @@ function MembersPanel() {
               </div>
               {csvResult.errors.length > 0 && (
                 <ul style={{ margin: 0, paddingLeft: 18 }}>
-                  {csvResult.errors.slice(0, 15).map((e, i) => (
+                  {csvResult.errors.slice(0, 30).map((e, i) => (
                     <li key={i} style={{ fontSize: 12 }}>{e}</li>
                   ))}
-                  {csvResult.errors.length > 15 && (
-                    <li style={{ fontSize: 12 }}>…and {csvResult.errors.length - 15} more</li>
+                  {csvResult.errors.length > 30 && (
+                    <li style={{ fontSize: 12 }}>…and {csvResult.errors.length - 30} more</li>
                   )}
                 </ul>
               )}
@@ -690,9 +700,8 @@ function MembersPanel() {
   );
 }
 
-function MemberCard({
-  member, currentUserId, canManageRoles, onChangeRole, busy,
-}) {
+
+function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy }) {
   const displayName = member.display_name || member.username;
   const initials = displayName.slice(0, 2).toUpperCase();
   const avatarSrc = member.avatar_url
@@ -831,6 +840,7 @@ function MemberCard({
     </div>
   );
 }
+
 
 function FilterChip({ active, onClick, children }) {
   return (

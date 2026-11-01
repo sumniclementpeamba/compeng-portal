@@ -33,7 +33,18 @@ from .serializers import (
 
 
 # ─────────────────────────────────────────────────────────────
-# Register — admin-only, bypass CSV gate for individual overrides
+# Helpers
+# ─────────────────────────────────────────────────────────────
+def _looks_like_reference(value: str) -> bool:
+    """A reference number is 9 alphanumeric characters, e.g. UA2613334."""
+    if not value:
+        return False
+    s = value.strip()
+    return len(s) == 9 and s.isalnum()
+
+
+# ─────────────────────────────────────────────────────────────
+# Register — admin-only, for manual account creation
 # ─────────────────────────────────────────────────────────────
 class RegisterView(APIView):
     permission_classes = [IsAdminRole]
@@ -52,6 +63,8 @@ class RegisterView(APIView):
 
 # ─────────────────────────────────────────────────────────────
 # Login — reference number first, then legacy fallbacks
+# Auto-saves reference_number to the user if they logged in with
+# one and the field was previously empty.
 # ─────────────────────────────────────────────────────────────
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -75,10 +88,10 @@ class LoginView(APIView):
                     seen_ids.add(u.pk)
                     candidates.append(u)
 
-        # 1. Reference number — canonical for CSV-imported students
+        # 1. Reference number (canonical for CSV-imported students)
         add_candidates(User.objects.filter(reference_number__iexact=raw)[:5])
 
-        # 2. Direct username — admin accounts, legacy users
+        # 2. Direct username (admin accounts, legacy users)
         add_candidates(User.objects.filter(username=raw)[:5])
 
         # 3. Slugified username
@@ -86,11 +99,21 @@ class LoginView(APIView):
         if slug and slug != raw:
             add_candidates(User.objects.filter(username=slug)[:5])
 
-        # 4. Exact full-name match — legacy
+        # 4. Exact full-name match (legacy)
         add_candidates(User.objects.filter(first_name__iexact=raw)[:5])
 
         for user in candidates:
             if user.check_password(password):
+                # Auto-save reference_number on the profile for legacy
+                # accounts (created before the reference-number feature).
+                if _looks_like_reference(raw) and not user.reference_number:
+                    already_taken = User.objects.filter(
+                        reference_number__iexact=raw
+                    ).exclude(pk=user.pk).exists()
+                    if not already_taken:
+                        user.reference_number = raw.upper()
+                        user.save(update_fields=["reference_number"])
+
                 token, _ = Token.objects.get_or_create(user=user)
                 return Response({
                     "token": token.key,
@@ -170,11 +193,12 @@ class MeAvatarView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Members — list
+# Members — list (no pagination; class roster is a fixed set)
 # ─────────────────────────────────────────────────────────────
 class MemberListView(generics.ListAPIView):
     serializer_class = MemberListSerializer
     permission_classes = [CanReview]
+    pagination_class = None   # Return all members in one response
 
     def get_queryset(self):
         qs = (
@@ -204,6 +228,7 @@ class MemberListView(generics.ListAPIView):
                 | Q(username__icontains=q)
                 | Q(email__icontains=q)
                 | Q(reference_number__icontains=q)
+                | Q(phone_number__icontains=q)
             )
 
         role = p.get("role")
