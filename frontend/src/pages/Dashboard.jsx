@@ -77,7 +77,6 @@ export default function Dashboard() {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
 
-  // Today's classes from timetable
   const jsDay = new Date().getDay();
   const todayIdx = jsDay === 0 ? 6 : jsDay - 1;
   const todaysClasses = timetable
@@ -93,6 +92,7 @@ export default function Dashboard() {
           grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
           align-items: start;
         }
+        .dash-grid > * { min-width: 0; }
         @media (max-width: 900px) { .dash-grid { grid-template-columns: 1fr; } }
         .dash-stats {
           display: grid;
@@ -109,14 +109,65 @@ export default function Dashboard() {
           grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
           gap: 10px;
         }
+        .dash-ann-list {
+          list-style: none;
+          padding: 0;
+          margin: 0;
+          display: grid;
+          min-width: 0;
+        }
+        .dash-ann-item {
+          display: block;
+          min-width: 0;
+          text-decoration: none;
+          color: inherit;
+          padding: 10px 0;
+          border-top: 1px solid var(--border);
+        }
+        .dash-ann-title {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--text);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          min-width: 0;
+          max-width: 100%;
+        }
+        .dash-ann-card-body {
+          font-size: 14px;
+          color: var(--slate-600);
+          margin-top: 8px;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          display: -webkit-box;
+          -webkit-line-clamp: 4;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+          line-height: 1.55;
+        }
+        .dash-pinned-body {
+          font-size: 13px;
+          color: #78350f;
+          margin-top: 2px;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          display: -webkit-box;
+          -webkit-line-clamp: 3;
+          -webkit-box-orient: vertical;
+          overflow: hidden;
+          line-height: 1.5;
+        }
       `}</style>
 
       {/* Hero */}
-      <header style={{
-        display: 'flex', justifyContent: 'space-between',
-        alignItems: 'flex-end', flexWrap: 'wrap', gap: 16,
-      }}>
-        <div>
+      <header
+        style={{
+          display: 'flex', justifyContent: 'space-between',
+          alignItems: 'flex-end', flexWrap: 'wrap', gap: 16,
+        }}
+      >
+        <div style={{ minWidth: 0, flex: '1 1 260px' }}>
           <p style={{
             fontSize: 12, fontWeight: 600, color: 'var(--text-muted)',
             textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0,
@@ -124,6 +175,7 @@ export default function Dashboard() {
           <h1 style={{
             fontSize: 30, marginTop: 6,
             letterSpacing: '-0.025em', lineHeight: 1.15,
+            overflowWrap: 'anywhere',
           }}>
             {greeting()}, {firstName}
           </h1>
@@ -133,7 +185,7 @@ export default function Dashboard() {
               : 'Be the first to add to your class library.'}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Link to="/resources" style={{
             padding: '9px 16px', borderRadius: 'var(--radius-sm)',
             border: '1px solid var(--border-strong)',
@@ -158,7 +210,7 @@ export default function Dashboard() {
         }}>{err}</div>
       )}
 
-      {/* Pinned banner */}
+      {/* Pinned banner — clamp + wrap so long body never overflows */}
       {topPinned && (
         <div style={{
           padding: '14px 18px',
@@ -166,17 +218,17 @@ export default function Dashboard() {
           border: '1px solid #fde68a', borderLeft: '4px solid #f59e0b',
           borderRadius: 'var(--radius)',
           display: 'flex', gap: 12, alignItems: 'flex-start',
+          minWidth: 0,
         }}>
           <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>📌</span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 600, fontSize: 14, color: '#92400e' }}>
+            <div style={{
+              fontWeight: 600, fontSize: 14, color: '#92400e',
+              overflowWrap: 'anywhere', wordBreak: 'break-word',
+            }}>
               {topPinned.title}
             </div>
-            <div style={{
-              fontSize: 13, color: '#78350f', marginTop: 2,
-              display: '-webkit-box',
-              WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-            }}>{topPinned.body}</div>
+            <div className="dash-pinned-body">{topPinned.body}</div>
           </div>
           <Link to="/announcements" style={{
             fontSize: 12, color: '#92400e',
@@ -185,7 +237,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Stats row */}
+      {/* Stats */}
       <div className="dash-stats">
         <StatCard
           icon="📚" label="Resources" value={recent.length}
@@ -209,17 +261,17 @@ export default function Dashboard() {
       </div>
 
       {/* Today's classes */}
-      <div className="card" style={{ padding: 16 }}>
+      <div className="card" style={{ padding: 16, minWidth: 0 }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between',
-          alignItems: 'center', marginBottom: 12,
+          alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8,
         }}>
           <h3 style={{
             fontSize: 11, textTransform: 'uppercase',
             letterSpacing: '0.08em', color: 'var(--text-muted)',
             fontWeight: 600, margin: 0,
           }}>Today's classes</h3>
-          <Link to="/timetable" style={{ fontSize: 12, fontWeight: 500 }}>
+          <Link to="/timetable" style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap' }}>
             {canManage ? 'Manage →' : 'Full week →'}
           </Link>
         </div>
@@ -246,20 +298,28 @@ export default function Dashboard() {
                 background: 'var(--slate-50)',
                 borderRadius: 'var(--radius-sm)',
                 flexWrap: 'wrap',
+                minWidth: 0,
               }}>
-                <div style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0, flex: '1 1 200px' }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
                     <span style={{
                       fontSize: 13, fontWeight: 700,
                       fontFamily: 'var(--font-mono)',
+                      overflowWrap: 'anywhere',
                     }}>{c.course_code}</span>
                     {c.course_title && (
-                      <span style={{ fontSize: 12, color: 'var(--slate-600)' }}>
+                      <span style={{
+                        fontSize: 12, color: 'var(--slate-600)',
+                        overflowWrap: 'anywhere',
+                      }}>
                         {c.course_title}
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                  <div style={{
+                    fontSize: 11, color: 'var(--text-muted)', marginTop: 2,
+                    overflowWrap: 'anywhere',
+                  }}>
                     {c.start_time} – {c.end_time}
                     {c.room && ` · ${c.room}`}
                     {c.lecturer && ` · ${c.lecturer}`}
@@ -279,10 +339,10 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Two-column */}
+      {/* Main + sidebar */}
       <div className="dash-grid">
-        <div style={{ display: 'grid', gap: 28 }}>
-          <section>
+        <div style={{ display: 'grid', gap: 28, minWidth: 0 }}>
+          <section style={{ minWidth: 0 }}>
             <SectionHeader
               title="Recently added"
               action="View all"
@@ -304,7 +364,7 @@ export default function Dashboard() {
           </section>
 
           {courses.length > 0 && (
-            <section>
+            <section style={{ minWidth: 0 }}>
               <SectionHeader
                 title="Browse by course"
                 action="All resources"
@@ -321,14 +381,16 @@ export default function Dashboard() {
                       padding: '14px 16px',
                       display: 'flex', alignItems: 'center',
                       justifyContent: 'space-between', gap: 8,
+                      minWidth: 0,
                     }}
                   >
-                    <div style={{ minWidth: 0 }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{
                         fontWeight: 700, fontSize: 14,
                         letterSpacing: '-0.01em', color: 'var(--text)',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        maxWidth: '100%',
                       }}>{c.name}</div>
                       <div style={{
                         fontSize: 12, color: 'var(--text-muted)', marginTop: 2,
@@ -336,7 +398,7 @@ export default function Dashboard() {
                         {c.count} resource{c.count === 1 ? '' : 's'}
                       </div>
                     </div>
-                    <span style={{ color: 'var(--slate-400)', fontSize: 16 }}>→</span>
+                    <span style={{ color: 'var(--slate-400)', fontSize: 16, flexShrink: 0 }}>→</span>
                   </Link>
                 ))}
               </div>
@@ -344,8 +406,8 @@ export default function Dashboard() {
           )}
         </div>
 
-        <aside style={{ display: 'grid', gap: 20 }}>
-          <div className="card" style={{ padding: 16 }}>
+        <aside style={{ display: 'grid', gap: 20, minWidth: 0 }}>
+          <div className="card" style={{ padding: 16, minWidth: 0 }}>
             <h3 style={{
               fontSize: 11, textTransform: 'uppercase',
               letterSpacing: '0.08em', color: 'var(--text-muted)',
@@ -363,17 +425,19 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="card" style={{ padding: 16 }}>
+          {/* Sidebar — Latest announcements (safe title + link chain) */}
+          <div className="card" style={{ padding: 16, minWidth: 0 }}>
             <div style={{
               display: 'flex', justifyContent: 'space-between',
-              alignItems: 'baseline', marginBottom: 4,
+              alignItems: 'baseline', marginBottom: 4, gap: 8,
             }}>
               <h3 style={{
                 fontSize: 11, textTransform: 'uppercase',
                 letterSpacing: '0.08em', color: 'var(--text-muted)',
+                minWidth: 0,
               }}>Latest announcements</h3>
               {ann.length > 0 && (
-                <Link to="/announcements" style={{ fontSize: 11, fontWeight: 600 }}>
+                <Link to="/announcements" style={{ fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
                   All →
                 </Link>
               )}
@@ -383,19 +447,11 @@ export default function Dashboard() {
                 No announcements yet.
               </p>
             ) : (
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid' }}>
+              <ul className="dash-ann-list">
                 {ann.slice(0, 4).map((a) => (
-                  <li key={a.id}>
-                    <Link to="/announcements" style={{
-                      textDecoration: 'none', color: 'inherit', display: 'block',
-                      padding: '10px 0',
-                      borderTop: '1px solid var(--border)',
-                    }}>
-                      <div style={{
-                        fontSize: 13, fontWeight: 600, color: 'var(--text)',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                      }}>
+                  <li key={a.id} style={{ minWidth: 0 }}>
+                    <Link to="/announcements" className="dash-ann-item">
+                      <div className="dash-ann-title">
                         {a.pinned && '📌 '}
                         {a.title}
                       </div>
@@ -424,6 +480,7 @@ function StatCard({ icon, label, value, href, accent, highlight }) {
       display: 'flex', alignItems: 'center', gap: 12,
       borderColor: highlight ? accent : 'var(--border)',
       borderWidth: highlight ? 2 : 1,
+      minWidth: 0,
     }}>
       <div style={{
         fontSize: 20, width: 40, height: 40, borderRadius: 10,
@@ -447,11 +504,11 @@ function SectionHeader({ title, action, actionHref }) {
   return (
     <div style={{
       display: 'flex', justifyContent: 'space-between',
-      alignItems: 'baseline', marginBottom: 12,
+      alignItems: 'baseline', marginBottom: 12, gap: 8,
     }}>
-      <h2 style={{ fontSize: 16, letterSpacing: '-0.01em' }}>{title}</h2>
+      <h2 style={{ fontSize: 16, letterSpacing: '-0.01em', minWidth: 0 }}>{title}</h2>
       {action && actionHref && (
-        <Link to={actionHref} style={{ fontSize: 13, fontWeight: 500 }}>
+        <Link to={actionHref} style={{ fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap' }}>
           {action} →
         </Link>
       )}
@@ -472,7 +529,7 @@ function ResourceCard({ resource, canManage }) {
       textDecoration: 'none', color: 'inherit',
       padding: 14,
       display: 'flex', flexDirection: 'column',
-      gap: 10, height: '100%',
+      gap: 10, height: '100%', minWidth: 0,
     }}>
       <div style={{
         display: 'flex', justifyContent: 'space-between',
@@ -489,12 +546,13 @@ function ResourceCard({ resource, canManage }) {
           <span className={`badge ${badgeClass}`}>{resource.status}</span>
         )}
       </div>
-      <div style={{ flex: 1 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{
           fontWeight: 600, fontSize: 14, color: 'var(--text)',
           display: '-webkit-box',
           WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
           lineHeight: 1.35, minHeight: '2.7em',
+          overflowWrap: 'anywhere', wordBreak: 'break-word',
         }}>{resource.title}</div>
         <div style={{
           fontSize: 12, color: 'var(--text-muted)', marginTop: 6,
@@ -519,6 +577,7 @@ function QuickLink({ to, icon, label }) {
       borderRadius: 'var(--radius-sm)',
       textDecoration: 'none', color: 'var(--text)', fontSize: 13,
       transition: 'background 140ms ease',
+      minWidth: 0,
     }}
       onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--slate-100)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
@@ -529,7 +588,9 @@ function QuickLink({ to, icon, label }) {
         display: 'grid', placeItems: 'center',
         fontSize: 12, flexShrink: 0,
       }}>{icon}</span>
-      <span>{label}</span>
+      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+        {label}
+      </span>
     </Link>
   );
 }
