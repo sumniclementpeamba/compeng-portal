@@ -13,6 +13,29 @@ const REFERENCE_MAX_LEN = 9;
 const CREATOR_NAME = 'CLEMENT PEAMBA SUMNI';
 const COPYRIGHT_YEAR = new Date().getFullYear();
 
+// Routes that require rep/admin role. If a login redirect target is one
+// of these and the user doesn't have the role, we send them to the
+// dashboard instead of showing "Access denied".
+const PROTECTED_ROUTES = ['/manage'];
+
+function isProtectedPath(path) {
+  if (!path) return false;
+  return PROTECTED_ROUTES.some(
+    (p) => path === p || path.startsWith(p + '/')
+  );
+}
+
+function safeRedirect(user, location) {
+  const from = location.state?.from?.pathname;
+  if (!from) return '/';
+  if (isProtectedPath(from)) {
+    if (user?.role === 'rep' || user?.role === 'admin') return from;
+    // Student tried to reach a protected route — send to dashboard
+    return '/';
+  }
+  return from;
+}
+
 export default function Login() {
   const { user, loading, login } = useAuth();
   const navigate = useNavigate();
@@ -35,8 +58,9 @@ export default function Login() {
     );
   }
 
+  // Already logged in — smart redirect (never sends students to /manage)
   if (user) {
-    return <Navigate to={location.state?.from?.pathname || '/'} replace />;
+    return <Navigate to={safeRedirect(user, location)} replace />;
   }
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -46,8 +70,8 @@ export default function Login() {
     setErr('');
     setBusy(true);
     try {
-      await login(form.reference.trim(), form.password);
-      navigate(location.state?.from?.pathname || '/');
+      const loggedInUser = await login(form.reference.trim(), form.password);
+      navigate(safeRedirect(loggedInUser, location));
     } catch (e) {
       setErr(e.message || 'Something went wrong.');
     } finally {
@@ -81,6 +105,7 @@ export default function Login() {
         }}
       >
         <div style={{ textAlign: 'center', marginBottom: 4 }}>
+          {/* Avatar with soft pulsing glow */}
           <div style={{
             width: 84, height: 84, margin: '0 auto 14px',
             borderRadius: '50%', overflow: 'hidden',
@@ -88,6 +113,7 @@ export default function Login() {
             boxShadow: '0 8px 24px rgba(15,23,42,0.18), 0 0 0 3px rgba(59,130,246,0.35)',
             background: 'var(--slate-100)',
             display: 'grid', placeItems: 'center',
+            animation: 'avatarGlow 3s ease-in-out infinite',
           }}>
             {!imgFailed ? (
               <img
@@ -102,6 +128,19 @@ export default function Login() {
               <span style={{ fontSize: 28, fontWeight: 800, color: 'var(--brand)' }}>C</span>
             )}
           </div>
+
+          {/* Animated welcome tagline */}
+          <p style={{
+            fontSize: 11,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.1em',
+            color: 'var(--brand)',
+            margin: '0 0 6px',
+            animation: 'welcomePop 800ms cubic-bezier(0.34, 1.56, 0.64, 1) 200ms both',
+          }}>
+            👋 Welcome
+          </p>
 
           <h1 style={{ fontSize: 22 }}>CompEng Portal</h1>
           {REP_CAPTION && (
@@ -132,7 +171,7 @@ export default function Login() {
             }}
           />
           <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
-             Not on the class list? Contact your course rep.
+            Not on the class list? Contact your course rep.
           </span>
         </label>
 
@@ -195,4 +234,4 @@ export default function Login() {
       </footer>
     </div>
   );
-}
+} 

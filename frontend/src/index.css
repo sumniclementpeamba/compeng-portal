@@ -977,4 +977,37 @@ ul.stagger > li,
     max-width: 100%;
     overflow-wrap: anywhere;
     word-break: break-word;
+  }
+  
+
+/* ═══════════════════════════════════════════════════════════════
+   Login page animations
+   ═══════════════════════════════════════════════════════════════ */
+
+   @keyframes welcomePop {
+    0% {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.94);
+    }
+    60% {
+      opacity: 1;
+      transform: translateY(0) scale(1.04);
+    }
+    100% {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+  
+  @keyframes avatarGlow {
+    0%, 100% {
+      box-shadow:
+        0 8px 24px rgba(15, 23, 42, 0.18),
+        0 0 0 3px rgba(59, 130, 246, 0.35);
+    }
+    50% {
+      box-shadow:
+        0 8px 24px rgba(15, 23, 42, 0.18),
+        0 0 0 7px rgba(59, 130, 246, 0.14);
+    }
   }  
