@@ -5,16 +5,20 @@ Expected format — three columns, this order:
     Reference number | Name | Number
 
 Example row:
-    UA2600133,Adaeze Okonkwo,0244123456
+    UA2613334,Gbolo Abdulah Abdul Ganiu Tanira,0501938097
 
-Reference numbers are 9 characters (see REFERENCE_NUMBER_MAX_LEN in
-models.py). Longer references are rejected per row.
+=== MATCHING RULE (the only rule) ===
 
-Header row is optional. If the first row's cells contain words like
-"reference", "name", "number", or "phone", it's treated as a header
-and skipped. Otherwise the first row is treated as data.
+A CSV row is matched to an existing student ONLY IF its REFERENCE
+NUMBER matches an existing row's reference_number (case-insensitive).
 
-Columns beyond index 2 are ignored.
+The name is NEVER used to match. If a CSV row has a NEW reference
+number but the SAME name as an existing student, a NEW record is
+created. Names are not unique in this database — two students can
+legitimately share the same full name.
+
+Only when a reference number matches is the existing record updated
+(name, phone number). The password is NEVER touched on update.
 """
 import csv
 import hashlib
@@ -34,7 +38,7 @@ HEADER_KEYWORDS = ("ref", "name", "num", "phone")
 
 
 def ref_to_username(ref: str) -> str:
-    """Turn 'UA2600133' into 'ua2600133' for the Django username field."""
+    """Turn 'UA2613334' into 'ua2613334' for the Django username field."""
     cleaned = (ref or "").strip().upper()
     for sep in ("/", "\\", ".", ",", "|", "_", " "):
         cleaned = cleaned.replace(sep, "-")
@@ -55,8 +59,15 @@ def _looks_like_header(row: list) -> bool:
     return False
 
 
-def create_or_update_member(reference: str, name: str, number: str, password: str):
-    """Idempotent: matches on reference_number, creates or updates."""
+def create_or_update_member(reference, name, number, password):
+    """Reference-number-based upsert.
+
+    Returns (action, user, name_was_duplicate) where:
+      - action is "created" or "updated"
+      - user is the User instance
+      - name_was_duplicate is True only when a NEW user was created
+        with a name that already exists on another student
+    """
     ref = (reference or "").strip()
     if not ref:
         raise ValueError("reference number is empty")
@@ -66,11 +77,18 @@ def create_or_update_member(reference: str, name: str, number: str, password: st
             f"(max {REFERENCE_NUMBER_MAX_LEN})"
         )
 
+    # ─────────────────────────────────────────────────────────
+    # REFERENCE-ONLY MATCH. This is the single source of truth.
+    # The name is NEVER used to look up an existing record.
+    # ─────────────────────────────────────────────────────────
     existing = User.objects.filter(reference_number__iexact=ref).first()
 
     if existing:
+        # Reference exists → update name and phone on that record
         if existing.is_superuser or existing.is_staff:
-            raise ValueError(f"'{ref}' collides with an admin account — skipped")
+            raise ValueError(
+                f"'{ref}' collides with an admin account — skipped"
+            )
         updates = {}
         if name and existing.first_name != name:
             updates["first_name"] = name
@@ -80,9 +98,20 @@ def create_or_update_member(reference: str, name: str, number: str, password: st
             for k, v in updates.items():
                 setattr(existing, k, v)
             existing.save(update_fields=list(updates.keys()))
-        return "updated", existing
+        return "updated", existing, False
 
-    # New user
+    # ─────────────────────────────────────────────────────────
+    # Reference does NOT exist → create a new record.
+    # Check if the name happens to match another student, purely
+    # for reporting. This does NOT block or merge — it's just
+    # information for the import summary.
+    # ─────────────────────────────────────────────────────────
+    name_was_duplicate = False
+    if name:
+        name_was_duplicate = (
+            User.objects.filter(first_name__iexact=name).exists()
+        )
+
     base_username = ref_to_username(ref)
     username = base_username
     counter = 1
@@ -98,12 +127,14 @@ def create_or_update_member(reference: str, name: str, number: str, password: st
     )
     user.set_password(password)
     user.save()
-    ClassMembership.objects.create(user=user, role=ClassMembership.ROLE_STUDENT)
-    return "created", user
+    ClassMembership.objects.create(
+        user=user, role=ClassMembership.ROLE_STUDENT,
+    )
+    return "created", user, name_was_duplicate
 
 
-def import_members_from_csv(file_obj, password: str) -> dict:
-    """Parse the uploaded CSV, create/update users. Returns a summary dict."""
+def import_members_from_csv(file_obj, password):
+    """Parse the uploaded CSV, create/update users. Returns summary."""
     raw = file_obj.read()
     try:
         text = raw.decode("utf-8-sig")
@@ -123,8 +154,9 @@ def import_members_from_csv(file_obj, password: str) -> dict:
 
     created = 0
     updated = 0
-    errors: list = []
-    seen_refs: set = set()
+    duplicate_names_created = 0
+    errors = []
+    seen_refs = set()
 
     for line_num, row in enumerate(data_rows, start=2 if has_header else 1):
         def cell(idx):
@@ -145,9 +177,13 @@ def import_members_from_csv(file_obj, password: str) -> dict:
         seen_refs.add(ref_key)
 
         try:
-            action, _ = create_or_update_member(ref, name, number, password)
+            action, _, name_was_dup = create_or_update_member(
+                ref, name, number, password,
+            )
             if action == "created":
                 created += 1
+                if name_was_dup:
+                    duplicate_names_created += 1
             else:
                 updated += 1
         except Exception as e:
@@ -157,5 +193,6 @@ def import_members_from_csv(file_obj, password: str) -> dict:
         "created": created,
         "updated": updated,
         "total": created + updated,
+        "duplicate_names_created": duplicate_names_created,
         "errors": errors,
     } 
