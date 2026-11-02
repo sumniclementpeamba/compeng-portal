@@ -297,6 +297,7 @@ function AuditPanel() {
         <FilterChip active={filter === 'resource.version_uploaded'} onClick={() => setFilter('resource.version_uploaded')}>Version uploads</FilterChip>
         <FilterChip active={filter === 'member.role_changed'} onClick={() => setFilter('member.role_changed')}>Role changes</FilterChip>
         <FilterChip active={filter === 'members.csv_imported'} onClick={() => setFilter('members.csv_imported')}>CSV imports</FilterChip>
+        <FilterChip active={filter === 'members.exported'} onClick={() => setFilter('members.exported')}>Exports</FilterChip>
         <button
           onClick={load}
           disabled={loading}
@@ -479,7 +480,7 @@ function MembersPanel() {
   const [csvResult, setCsvResult] = useState(null);
   const [csvBusy, setCsvBusy] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
-  const [downloading, setDownloading] = useState(null); // 'csv' | 'xlsx' | null
+  const [downloading, setDownloading] = useState(null);
 
   async function downloadMembers(format) {
     setDownloading(format);
@@ -680,6 +681,21 @@ function MembersPanel() {
                 ✅ Created {csvResult.created}, updated {csvResult.updated}
                 {csvResult.errors.length > 0 && `, ${csvResult.errors.length} error(s)`}
               </div>
+              {csvResult.duplicate_names_created > 0 && (
+                <div style={{
+                  fontSize: 12,
+                  marginBottom: 6,
+                  padding: '6px 10px',
+                  background: 'rgba(180, 83, 9, 0.08)',
+                  borderRadius: 'var(--radius-sm)',
+                  color: '#92400e',
+                }}>
+                  ℹ️ {csvResult.duplicate_names_created} new record
+                  {csvResult.duplicate_names_created === 1 ? '' : 's'} created with a name
+                  that matches an existing student — different reference numbers, so both
+                  are kept separately.
+                </div>
+              )}
               <div style={{ fontSize: 12, marginBottom: csvResult.errors.length ? 8 : 0 }}>
                 General password: <code>{csvResult.password}</code>
               </div>

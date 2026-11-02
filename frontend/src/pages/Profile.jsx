@@ -18,6 +18,7 @@ export default function Profile() {
     email: user?.email || '',
     level: user?.level || '',
     index_number: user?.index_number || '',
+    phone_number: user?.phone_number || '',
   });
   const [newAvatar, setNewAvatar] = useState(null);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState(null);
@@ -67,6 +68,7 @@ export default function Profile() {
       email: user.email || '',
       level: user.level || '',
       index_number: user.index_number || '',
+      phone_number: user.phone_number || '',
     });
     if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
     setNewAvatar(null);
@@ -97,6 +99,10 @@ export default function Profile() {
       const trimmedIndex = (form.index_number || '').trim();
       if (trimmedIndex !== (user.index_number || '')) {
         fd.append('index_number', trimmedIndex);
+      }
+      const trimmedPhone = (form.phone_number || '').trim();
+      if (trimmedPhone !== (user.phone_number || '')) {
+        fd.append('phone_number', trimmedPhone);
       }
       if (newAvatar) {
         fd.append('avatar', newAvatar);
@@ -280,7 +286,7 @@ export default function Profile() {
             </div>
           </div>
 
-          {/* Credentials card */}
+          {/* Credentials card — read-only at-a-glance */}
           <div className="card" style={{
             padding: 24,
             borderLeft: '3px solid var(--brand)',
@@ -305,23 +311,31 @@ export default function Profile() {
               Use your reference number with the class password to sign in from any device.
             </p>
 
-            <div style={{ display: 'grid', gap: 12 }}>
+            <div style={{ display: 'grid', gap: 14 }}>
               <CredentialRow
                 label="Reference number"
                 value={user.reference_number || '—'}
                 mono
-                hint="This is your sign-in identifier."
+                hint="Your sign-in identifier. Managed by the course rep — contact them to change it."
               />
               <CredentialRow
                 label="Index number"
                 value={user.index_number || '—'}
                 mono
-                hint="Your university index number (e.g. UEB1109726). Add it in Edit profile."
+                hint={
+                  user.index_number
+                    ? 'Your university index number.'
+                    : 'Not set yet — add it via Edit profile above.'
+                }
               />
               <CredentialRow
                 label="Phone number"
                 value={user.phone_number || '—'}
-                hint="Used by the course rep to reach you."
+                hint={
+                  user.phone_number
+                    ? 'Used by the course rep to contact you. You can update it in Edit profile.'
+                    : 'Not set yet — add it via Edit profile above.'
+                }
               />
             </div>
 
@@ -340,7 +354,7 @@ export default function Profile() {
             </div>
           </div>
 
-          {/* Personal details */}
+          {/* Personal details — view or edit */}
           {editing ? (
             <form
               id="profile-form"
@@ -394,6 +408,30 @@ export default function Profile() {
               </label>
 
               <label style={LABEL}>
+                Phone number
+                <input
+                  type="tel"
+                  value={form.phone_number}
+                  onChange={(e) => setForm({ ...form, phone_number: e.target.value })}
+                  maxLength={30}
+                  style={{
+                    ...FIELD,
+                    fontFamily: 'var(--font-mono)',
+                    letterSpacing: '0.02em',
+                  }}
+                  placeholder="e.g. 0531496803"
+                />
+                <span style={{
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                  display: 'block',
+                  marginTop: 4,
+                }}>
+                  Used by the course rep to contact you. Leave blank if you prefer not to share.
+                </span>
+              </label>
+
+              <label style={LABEL}>
                 Email
                 <input
                   type="email"
@@ -415,7 +453,7 @@ export default function Profile() {
               </label>
 
               <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>
-                Your reference number and phone are managed by the course rep.
+                Your reference number is managed by the course rep — contact them if it needs to change.
               </p>
             </form>
           ) : (
@@ -438,6 +476,7 @@ export default function Profile() {
               }}>
                 <DetailRow label="Full name" value={user.first_name || '—'} />
                 <DetailRow label="Index number" value={user.index_number || '—'} />
+                <DetailRow label="Phone number" value={user.phone_number || '—'} />
                 <DetailRow label="Email" value={user.email || '—'} />
                 <DetailRow label="Level" value={user.level || '—'} />
               </dl>

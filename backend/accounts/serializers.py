@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 from django.utils.text import slugify
 
@@ -63,13 +65,15 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = (
             "id", "username", "role", "membership_role", "is_class_rep",
             "display_name", "avatar_url", "last_name",
-            "reference_number", "phone_number",
+            "reference_number",
+            # phone_number — NOT read-only: students can update their own contact
         )
         extra_kwargs = {
             "avatar": {"write_only": True, "required": False},
             "email": {"required": False, "allow_blank": True},
             "level": {"required": False, "allow_blank": True},
             "index_number": {"required": False, "allow_blank": True},
+            "phone_number": {"required": False, "allow_blank": True},
         }
 
     def get_role(self, obj):
@@ -101,6 +105,20 @@ class UserSerializer(serializers.ModelSerializer):
         if qs.exists():
             raise serializers.ValidationError(
                 "A student with this full name already exists."
+            )
+        return value
+
+    def validate_phone_number(self, value):
+        if not value:
+            return value
+        value = value.strip()
+        if len(value) > 30:
+            raise serializers.ValidationError(
+                "Phone number must be 30 characters or fewer."
+            )
+        if not re.match(r"^[0-9+\-\s()]+$", value):
+            raise serializers.ValidationError(
+                "Phone number may only contain digits, spaces, +, -, ( and )."
             )
         return value
 
