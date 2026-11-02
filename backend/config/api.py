@@ -7,6 +7,7 @@ from accounts.views import (
     MemberCSVUploadView,
     MemberListView,
     MemberRoleUpdateView,
+    MemberExportView,
     MeAvatarView,
     MeView,
     NotificationListView,
@@ -59,4 +60,5 @@ urlpatterns = [
     path("members/<int:user_id>/avatar/", MemberAvatarView.as_view(), name="member-avatar"),
     path("members/<int:user_id>/role/", MemberRoleUpdateView.as_view(), name="member-role"),
     path("attendance/", include("attendance.urls")),
+        path("members/export/", MemberExportView.as_view(), name="members-export"),
 ] 

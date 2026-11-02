@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import mimetypes
 import os
@@ -8,11 +10,13 @@ from django.conf import settings
 from django.contrib.auth import authenticate
 from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Count, Q
-from django.http import FileResponse, JsonResponse, StreamingHttpResponse
+from django.http import FileResponse, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.utils.text import slugify
 from django.views.decorators.csrf import csrf_exempt
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 from rest_framework import generics, status
 from rest_framework.authtoken.models import Token
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
@@ -43,8 +47,42 @@ def _looks_like_reference(value: str) -> bool:
     return len(s) == 9 and s.isalnum()
 
 
+def _build_member_rows():
+    """Return (headers, rows) shared by both CSV and XLSX export.
+
+    Centralized so the two formats stay in sync forever.
+    """
+    headers = [
+        "Reference Number", "Full Name", "Contact",
+        "Index Number", "Level", "Role", "Email", "Joined",
+    ]
+
+    users = (
+        User.objects
+        .filter(membership__isnull=False)
+        .select_related("membership")
+        .order_by("first_name", "username")
+    )
+
+    rows = []
+    for u in users:
+        m = getattr(u, "membership", None)
+        rows.append([
+            u.reference_number or "",
+            u.first_name or u.username,
+            u.phone_number or "",
+            u.index_number or "",
+            u.level or "",
+            role_of(u),
+            u.email or "",
+            m.joined_at.strftime("%Y-%m-%d") if m and m.joined_at else "",
+        ])
+
+    return headers, rows, users.count()
+
+
 # ─────────────────────────────────────────────────────────────
-# Register — admin-only, for manual account creation
+# Register — admin-only, manual account creation
 # ─────────────────────────────────────────────────────────────
 class RegisterView(APIView):
     permission_classes = [IsAdminRole]
@@ -63,8 +101,6 @@ class RegisterView(APIView):
 
 # ─────────────────────────────────────────────────────────────
 # Login — reference number first, then legacy fallbacks
-# Auto-saves reference_number to the user if they logged in with
-# one and the field was previously empty.
 # ─────────────────────────────────────────────────────────────
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -88,24 +124,17 @@ class LoginView(APIView):
                     seen_ids.add(u.pk)
                     candidates.append(u)
 
-        # 1. Reference number (canonical for CSV-imported students)
         add_candidates(User.objects.filter(reference_number__iexact=raw)[:5])
-
-        # 2. Direct username (admin accounts, legacy users)
         add_candidates(User.objects.filter(username=raw)[:5])
 
-        # 3. Slugified username
         slug = slugify(raw)
         if slug and slug != raw:
             add_candidates(User.objects.filter(username=slug)[:5])
 
-        # 4. Exact full-name match (legacy)
         add_candidates(User.objects.filter(first_name__iexact=raw)[:5])
 
         for user in candidates:
             if user.check_password(password):
-                # Auto-save reference_number on the profile for legacy
-                # accounts (created before the reference-number feature).
                 if _looks_like_reference(raw) and not user.reference_number:
                     already_taken = User.objects.filter(
                         reference_number__iexact=raw
@@ -198,7 +227,7 @@ class MeAvatarView(APIView):
 class MemberListView(generics.ListAPIView):
     serializer_class = MemberListSerializer
     permission_classes = [CanReview]
-    pagination_class = None   # Return all members in one response
+    pagination_class = None
 
     def get_queryset(self):
         qs = (
@@ -229,6 +258,7 @@ class MemberListView(generics.ListAPIView):
                 | Q(email__icontains=q)
                 | Q(reference_number__icontains=q)
                 | Q(phone_number__icontains=q)
+                | Q(index_number__icontains=q)
             )
 
         role = p.get("role")
@@ -408,6 +438,110 @@ class ResetAllPasswordsView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
+# Export all members — CSV or XLSX (admin only)
+# ─────────────────────────────────────────────────────────────
+class MemberExportView(APIView):
+    """Download every class member's details.
+
+    Query params:
+        ?format=csv   → plain UTF-8 CSV with BOM (default)
+        ?format=xlsx  → Excel workbook with styled header, autosized
+                        columns, and frozen header row
+
+    Admin only.
+    """
+
+    permission_classes = [IsAdminRole]
+
+    def get(self, request):
+        fmt = (request.query_params.get("format") or "csv").lower()
+        if fmt not in ("csv", "xlsx"):
+            fmt = "csv"
+
+        headers, rows, count = _build_member_rows()
+        today = timezone.now().date()
+
+        if fmt == "xlsx":
+            response = self._build_xlsx(headers, rows, today)
+        else:
+            response = self._build_csv(headers, rows, today)
+
+        log(request.user, "members.exported", format=fmt, count=count)
+
+        return response
+
+    def _build_csv(self, headers, rows, today):
+        response = HttpResponse(content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = (
+            f'attachment; filename="members-{today}.csv"'
+        )
+        response.write("\ufeff")  # UTF-8 BOM so Excel opens cleanly
+
+        writer = csv.writer(response)
+        writer.writerow(headers)
+        for row in rows:
+            writer.writerow(row)
+
+        return response
+
+    def _build_xlsx(self, headers, rows, today):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Members"
+
+        # Header styling
+        header_font = Font(bold=True, color="FFFFFF", size=11)
+        header_fill = PatternFill(
+            start_color="1D4ED8", end_color="1D4ED8", fill_type="solid",
+        )
+        header_align = Alignment(horizontal="left", vertical="center")
+
+        for col_idx, header in enumerate(headers, start=1):
+            cell = ws.cell(row=1, column=col_idx, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_align
+
+        # Data rows
+        for row_idx, row in enumerate(rows, start=2):
+            for col_idx, value in enumerate(row, start=1):
+                ws.cell(row=row_idx, column=col_idx, value=value)
+
+        # Autosize columns
+        for col_idx in range(1, len(headers) + 1):
+            col_letter = ws.cell(row=1, column=col_idx).column_letter
+            max_len = len(str(headers[col_idx - 1]))
+            for row_idx in range(2, len(rows) + 2):
+                val = ws.cell(row=row_idx, column=col_idx).value
+                if val is not None:
+                    max_len = max(max_len, len(str(val)))
+            ws.column_dimensions[col_letter].width = min(max_len + 2, 40)
+
+        # Freeze header row so it stays visible while scrolling
+        ws.freeze_panes = "A2"
+
+        # Row height for header
+        ws.row_dimensions[1].height = 22
+
+        # Write to buffer
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        response = HttpResponse(
+            buffer.getvalue(),
+            content_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".spreadsheetml.sheet"
+            ),
+        )
+        response["Content-Disposition"] = (
+            f'attachment; filename="members-{today}.xlsx"'
+        )
+        return response
+
+
+# ─────────────────────────────────────────────────────────────
 # Notifications — REST
 # ─────────────────────────────────────────────────────────────
 class NotificationListView(generics.ListAPIView):
@@ -446,11 +580,6 @@ class NotificationMarkAllReadView(APIView):
 # ─────────────────────────────────────────────────────────────
 @csrf_exempt
 def notification_stream(request):
-    """Server-Sent Events stream of new notifications for the logged-in user.
-
-    Auth via header OR ?token=<key>. EventSource can't send custom headers,
-    so the query-token path is required for the live stream specifically.
-    """
     user = request.user if getattr(request.user, "is_authenticated", False) else None
     if not user:
         token_key = request.GET.get("token")

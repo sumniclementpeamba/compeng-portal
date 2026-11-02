@@ -5,19 +5,15 @@ from .models import ClassMembership, Notification, User
 from .permissions import role_of
 
 
-# ─────────────────────────────────────────────────────────────
-# Avatar validation constants
-# ─────────────────────────────────────────────────────────────
-MAX_AVATAR_BYTES = 2 * 1024 * 1024   # 2 MB
+MAX_AVATAR_BYTES = 2 * 1024 * 1024
 ALLOWED_AVATAR_MIMES = {
     "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif",
 }
 
 
-# ─────────────────────────────────────────────────────────────
-# Register — admin-only, for manual account creation
-# ─────────────────────────────────────────────────────────────
 class RegisterSerializer(serializers.Serializer):
+    """Admin-only use — creates accounts outside the CSV flow."""
+
     full_name = serializers.CharField(max_length=150)
     password = serializers.CharField(write_only=True, min_length=8)
 
@@ -49,13 +45,6 @@ class RegisterSerializer(serializers.Serializer):
         return user
 
 
-# ─────────────────────────────────────────────────────────────
-# Current user (GET / PATCH /api/me/)
-#
-# Exposes both `role` (superuser-aware) and `membership_role`
-# (raw ClassMembership.role) so the frontend can distinguish
-# "admin" from "rep with extra powers" cleanly.
-# ─────────────────────────────────────────────────────────────
 class UserSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
     membership_role = serializers.SerializerMethodField()
@@ -69,6 +58,7 @@ class UserSerializer(serializers.ModelSerializer):
             "id", "username", "display_name", "first_name", "last_name",
             "email", "level", "role", "membership_role", "is_class_rep",
             "avatar", "avatar_url", "reference_number", "phone_number",
+            "index_number",
         )
         read_only_fields = (
             "id", "username", "role", "membership_role", "is_class_rep",
@@ -79,6 +69,7 @@ class UserSerializer(serializers.ModelSerializer):
             "avatar": {"write_only": True, "required": False},
             "email": {"required": False, "allow_blank": True},
             "level": {"required": False, "allow_blank": True},
+            "index_number": {"required": False, "allow_blank": True},
         }
 
     def get_role(self, obj):
@@ -126,9 +117,6 @@ class UserSerializer(serializers.ModelSerializer):
         return f
 
 
-# ─────────────────────────────────────────────────────────────
-# Members directory (GET /api/members/)
-# ─────────────────────────────────────────────────────────────
 class MemberListSerializer(serializers.ModelSerializer):
     role = serializers.SerializerMethodField()
     membership_role = serializers.SerializerMethodField()
@@ -143,7 +131,7 @@ class MemberListSerializer(serializers.ModelSerializer):
         model = User
         fields = (
             "id", "username", "display_name", "first_name",
-            "reference_number", "phone_number",
+            "reference_number", "phone_number", "index_number",
             "email", "level", "role", "membership_role", "is_class_rep",
             "avatar_url", "joined_at", "uploads_count", "pending_count",
         )
@@ -172,9 +160,6 @@ class MemberListSerializer(serializers.ModelSerializer):
         return m.joined_at if m else None
 
 
-# ─────────────────────────────────────────────────────────────
-# Notifications
-# ─────────────────────────────────────────────────────────────
 class NotificationSerializer(serializers.ModelSerializer):
     actor_name = serializers.SerializerMethodField()
 

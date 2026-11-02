@@ -15,7 +15,7 @@ class User(AbstractUser):
 
     # "Number" column from the class CSV — typically a phone number.
     phone_number = models.CharField(max_length=30, blank=True)
-
+    index_number = models.CharField(max_length=30, blank=True) 
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
 
     # Reference number from the admission letter / class list.

@@ -13,6 +13,7 @@ const ACTION_META = {
   'member.role_changed':       { icon: '👤', verb: 'Changed role of',           accent: '#7c3aed' },
   'members.csv_imported':      { icon: '📋', verb: 'Imported class list',       accent: 'var(--brand)' },
   'members.passwords_reset':   { icon: '🔐', verb: 'Reset passwords for',       accent: 'var(--warning)' },
+  'members.exported':          { icon: '📥', verb: 'Exported members',          accent: 'var(--brand)' },
   'attendance.export_downloaded': { icon: '📥', verb: 'Downloaded attendance report', accent: 'var(--brand)' },
 };
 
@@ -29,8 +30,6 @@ export default function Management() {
   const isAdmin = user?.role === 'admin';
   const [tab, setTab] = useState('pending');
 
-  // Guard: if tab === 'audit' while not admin (stale state, deep link),
-  // silently fall back to 'pending'.
   const safeTab = tab === 'audit' && !isAdmin ? 'pending' : tab;
 
   return (
@@ -351,6 +350,7 @@ function AuditRow({ entry }) {
   const created = entry.details?.created;
   const updated = entry.details?.updated;
   const count = entry.details?.count;
+  const fmt = entry.details?.format;
 
   if (entry.action === 'members.csv_imported') {
     return (
@@ -388,6 +388,31 @@ function AuditRow({ entry }) {
               <strong>{entry.actor_name}</strong>{' '}
               <span style={{ color: 'var(--slate-600)' }}>reset passwords for</span>{' '}
               <strong>{count || 0} account(s)</strong>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
+              {new Date(entry.created_at).toLocaleString()}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (entry.action === 'members.exported') {
+    return (
+      <div className="card" style={{ padding: '14px 16px' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: `${meta.accent}15`, display: 'grid', placeItems: 'center', fontSize: 18, flexShrink: 0 }}>
+            {meta.icon}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14 }}>
+              <strong>{entry.actor_name}</strong>{' '}
+              <span style={{ color: 'var(--slate-600)' }}>exported members as</span>{' '}
+              <strong>{fmt || 'csv'}</strong>{' '}
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                ({count || 0} records)
+              </span>
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 3 }}>
               {new Date(entry.created_at).toLocaleString()}
@@ -454,6 +479,38 @@ function MembersPanel() {
   const [csvResult, setCsvResult] = useState(null);
   const [csvBusy, setCsvBusy] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
+  const [downloading, setDownloading] = useState(null); // 'csv' | 'xlsx' | null
+
+  async function downloadMembers(format) {
+    setDownloading(format);
+    setErr('');
+    try {
+      const token = getToken();
+      const url = `/api/members/export/?format=${format}`;
+      const res = await fetch(url, {
+        headers: token ? { Authorization: `Token ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+
+      const today = new Date().toISOString().slice(0, 10);
+      const ext = format === 'xlsx' ? 'xlsx' : 'csv';
+      const filename = `members-${today}.${ext}`;
+
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setDownloading(null);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -464,8 +521,6 @@ function MembersPanel() {
       if (roleFilter) params.set('role', roleFilter);
       const qs = params.toString();
       const d = await api.get(`/members/${qs ? '?' + qs : ''}`);
-      // Backend returns a flat array (no pagination on members endpoint),
-      // but handle the paginated shape too for backward compatibility.
       const list = Array.isArray(d) ? d : (d.results || []);
       setMembers(list);
     } catch (e) {
@@ -544,11 +599,35 @@ function MembersPanel() {
     <div>
       {isAdmin && (
         <div className="card" style={{ padding: 20, marginBottom: 20, borderLeft: '3px solid var(--brand)' }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>
-            Import class list (CSV)
-          </h3>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            alignItems: 'baseline', flexWrap: 'wrap', gap: 12, marginBottom: 12,
+          }}>
+            <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>
+              Class list management
+            </h3>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => downloadMembers('csv')}
+                disabled={downloading !== null}
+                style={{ padding: '7px 14px', fontSize: 12, borderRadius: 'var(--radius-sm)' }}
+              >
+                {downloading === 'csv' ? '⏳ Preparing…' : '📥 Export CSV'}
+              </button>
+              <button
+                type="button"
+                onClick={() => downloadMembers('xlsx')}
+                disabled={downloading !== null}
+                style={{ padding: '7px 14px', fontSize: 12, borderRadius: 'var(--radius-sm)' }}
+              >
+                {downloading === 'xlsx' ? '⏳ Preparing…' : '📊 Export Excel'}
+              </button>
+            </div>
+          </div>
+
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.55 }}>
-            Upload a CSV with exactly three columns: <code>Reference number</code>,{' '}
+            Upload a CSV with three columns: <code>Reference number</code>,{' '}
             <code>Name</code>, <code>Number</code>. New students get the general class
             password. Existing students keep their password — only their name and
             number are updated. A header row is optional.
@@ -631,7 +710,7 @@ function MembersPanel() {
         style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}
       >
         <input
-          placeholder="Search by name, reference, or phone…"
+          placeholder="Search by name, reference, index, or phone…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           style={{ flex: 1, minWidth: 200 }}
@@ -772,6 +851,14 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
               overflowWrap: 'anywhere',
             }}>
               @{member.username}
+            </div>
+          )}
+          {member.index_number && (
+            <div style={{
+              fontSize: 11, color: 'var(--slate-500)', marginTop: 2,
+              fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere',
+            }}>
+              🎓 {member.index_number}
             </div>
           )}
           <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>

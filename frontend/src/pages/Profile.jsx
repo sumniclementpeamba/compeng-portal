@@ -6,18 +6,8 @@ import { PageHeader, InfoCard } from '../components/PageUI';
 const LABEL = { fontSize: 13, fontWeight: 500, color: 'var(--slate-700)', display: 'block' };
 const FIELD = { width: '100%', marginTop: 4 };
 
-// Defensive fallback — if apiUrl isn't exported by client.js (older version),
-// fall back to the raw path so the page still renders.
-const safeApiUrl = (path) => {
-  if (!path) return path;
-  try {
-    if (typeof apiUrl === 'function') return apiUrl(path);
-  } catch {}
-  return path;
-};
-
 export default function Profile() {
-  const { user, loading, refresh } = useAuth();
+  const { user, refresh } = useAuth();
   const [editing, setEditing] = useState(false);
   const [avatarVersion, setAvatarVersion] = useState(0);
   const [imgFailed, setImgFailed] = useState(false);
@@ -27,6 +17,7 @@ export default function Profile() {
     first_name: user?.first_name || '',
     email: user?.email || '',
     level: user?.level || '',
+    index_number: user?.index_number || '',
   });
   const [newAvatar, setNewAvatar] = useState(null);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState(null);
@@ -35,46 +26,9 @@ export default function Profile() {
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
 
-  // ── Loading state — never return null ──────────────────────
-  if (loading) {
-    return (
-      <div style={{ display: 'grid', placeItems: 'center', minHeight: '50vh' }}>
-        <span
-          className="spinner spinner-dark"
-          style={{ width: 28, height: 28, borderWidth: 3 }}
-        />
-      </div>
-    );
-  }
+  if (!user) return null;
 
-  // ── No user — show clear message instead of blank ──────────
-  if (!user) {
-    console.warn('[Profile] user is null after loading — auth may have failed');
-    return (
-      <div className="animate-fade-up" style={{ maxWidth: 560, margin: '60px auto', textAlign: 'center' }}>
-        <div style={{ fontSize: 48, marginBottom: 12 }}>🔒</div>
-        <h2>Not signed in</h2>
-        <p style={{ color: 'var(--text-muted)', marginTop: 8 }}>
-          Your session may have expired. Please sign in again.
-        </p>
-        <a
-          href="/login"
-          className="btn-primary"
-          style={{
-            display: 'inline-block',
-            marginTop: 20,
-            padding: '9px 18px',
-            borderRadius: 'var(--radius-sm)',
-            textDecoration: 'none',
-          }}
-        >
-          Go to sign in
-        </a>
-      </div>
-    );
-  }
-
-  const displayName = user.first_name || user.username || 'User';
+  const displayName = user.first_name || user.username;
   const initials = displayName.slice(0, 2).toUpperCase();
   const roleBadge =
     user.role === 'admin'
@@ -84,7 +38,7 @@ export default function Profile() {
       : 'badge-neutral';
 
   const serverAvatarSrc = user.avatar_url
-    ? `${safeApiUrl(user.avatar_url)}?token=${getToken()}&v=${avatarVersion}`
+    ? `${apiUrl(user.avatar_url)}?token=${getToken()}&v=${avatarVersion}`
     : null;
 
   function openFilePicker() {
@@ -112,6 +66,7 @@ export default function Profile() {
       first_name: user.first_name || '',
       email: user.email || '',
       level: user.level || '',
+      index_number: user.index_number || '',
     });
     if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
     setNewAvatar(null);
@@ -139,14 +94,19 @@ export default function Profile() {
       if ((form.level || '') !== (user.level || '')) {
         fd.append('level', form.level || '');
       }
-      if (newAvatar) fd.append('avatar', newAvatar);
-      if (removeAvatar) fd.append('avatar_clear', 'true');
+      const trimmedIndex = (form.index_number || '').trim();
+      if (trimmedIndex !== (user.index_number || '')) {
+        fd.append('index_number', trimmedIndex);
+      }
+      if (newAvatar) {
+        fd.append('avatar', newAvatar);
+      }
+      if (removeAvatar) {
+        fd.append('avatar_clear', 'true');
+      }
 
       await api.patch('/me/', fd);
-
-      if (typeof refresh === 'function') {
-        await refresh();
-      }
+      await refresh();
 
       if (avatarPreviewUrl) URL.revokeObjectURL(avatarPreviewUrl);
       setNewAvatar(null);
@@ -238,9 +198,14 @@ export default function Profile() {
 
       <div className="split-grid">
         <div style={{ display: 'grid', gap: 20 }}>
-          {/* Hero */}
+          {/* Hero card */}
           <div className="card" style={{ padding: 24 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 20,
+              flexWrap: 'wrap',
+            }}>
               <AvatarDisplay
                 src={editing ? editingAvatarSrc : serverAvatarSrc}
                 initials={initials}
@@ -250,12 +215,19 @@ export default function Profile() {
               />
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{
-                  fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em',
-                  overflow: 'hidden', textOverflow: 'ellipsis',
+                  fontSize: 22,
+                  fontWeight: 700,
+                  letterSpacing: '-0.02em',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
                 }}>
                   {displayName}
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
+                <div style={{
+                  fontSize: 13,
+                  color: 'var(--text-muted)',
+                  marginTop: 2,
+                }}>
                   {user.role === 'admin'
                     ? 'Administrator'
                     : user.role === 'rep'
@@ -293,9 +265,11 @@ export default function Profile() {
                         setRemoveAvatar(true);
                       }}
                       style={{
-                        padding: '6px 12px', fontSize: 12,
+                        padding: '6px 12px',
+                        fontSize: 12,
                         color: 'var(--danger)',
-                        background: 'transparent', border: 'none',
+                        background: 'transparent',
+                        border: 'none',
                       }}
                     >
                       Remove photo
@@ -306,19 +280,28 @@ export default function Profile() {
             </div>
           </div>
 
-          {/* Credentials */}
+          {/* Credentials card */}
           <div className="card" style={{
             padding: 24,
             borderLeft: '3px solid var(--brand)',
             background: 'linear-gradient(180deg, #eff6ff 0%, #ffffff 70%)',
           }}>
             <h2 style={{
-              fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em',
-              color: 'var(--brand)', fontWeight: 700, marginBottom: 4,
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: 'var(--brand)',
+              fontWeight: 700,
+              marginBottom: 4,
             }}>
               Your credentials
             </h2>
-            <p style={{ fontSize: 12, color: 'var(--slate-600)', marginBottom: 16, lineHeight: 1.55 }}>
+            <p style={{
+              fontSize: 12,
+              color: 'var(--slate-600)',
+              marginBottom: 16,
+              lineHeight: 1.55,
+            }}>
               Use your reference number with the class password to sign in from any device.
             </p>
 
@@ -330,6 +313,12 @@ export default function Profile() {
                 hint="This is your sign-in identifier."
               />
               <CredentialRow
+                label="Index number"
+                value={user.index_number || '—'}
+                mono
+                hint="Your university index number (e.g. UEB1109726). Add it in Edit profile."
+              />
+              <CredentialRow
                 label="Phone number"
                 value={user.phone_number || '—'}
                 hint="Used by the course rep to reach you."
@@ -337,14 +326,17 @@ export default function Profile() {
             </div>
 
             <div style={{
-              marginTop: 16, padding: '10px 12px',
+              marginTop: 16,
+              padding: '10px 12px',
               background: '#fff',
               border: '1px dashed var(--border-strong)',
               borderRadius: 'var(--radius-sm)',
-              fontSize: 12, color: 'var(--slate-600)', lineHeight: 1.55,
+              fontSize: 12,
+              color: 'var(--slate-600)',
+              lineHeight: 1.55,
             }}>
-              <strong>Forgot your password?</strong> All students share the same
-              class password. Ask your course rep if you need it again.
+              <strong>Forgot your password?</strong> All students share the same class
+              password. Ask your course rep if you need it again.
             </div>
           </div>
 
@@ -357,8 +349,12 @@ export default function Profile() {
               style={{ padding: 24, display: 'grid', gap: 14 }}
             >
               <h2 style={{
-                fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.08em',
-                color: 'var(--text-muted)', fontWeight: 600, margin: 0,
+                fontSize: 13,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                color: 'var(--text-muted)',
+                fontWeight: 600,
+                margin: 0,
               }}>
                 Personal details
               </h2>
@@ -372,6 +368,29 @@ export default function Profile() {
                   style={FIELD}
                   placeholder="e.g. Sandra Sarkodie"
                 />
+              </label>
+
+              <label style={LABEL}>
+                Index number
+                <input
+                  value={form.index_number}
+                  onChange={(e) => setForm({ ...form, index_number: e.target.value })}
+                  maxLength={30}
+                  style={{
+                    ...FIELD,
+                    fontFamily: 'var(--font-mono)',
+                    letterSpacing: '0.02em',
+                  }}
+                  placeholder="e.g. UEB1109726"
+                />
+                <span style={{
+                  fontSize: 12,
+                  color: 'var(--text-muted)',
+                  display: 'block',
+                  marginTop: 4,
+                }}>
+                  Your university index number. Leave blank if you don't have one yet.
+                </span>
               </label>
 
               <label style={LABEL}>
@@ -402,17 +421,23 @@ export default function Profile() {
           ) : (
             <div className="card" style={{ padding: 24 }}>
               <h2 style={{
-                fontSize: 13, textTransform: 'uppercase', letterSpacing: '0.08em',
-                color: 'var(--text-muted)', marginBottom: 16, fontWeight: 600,
+                fontSize: 13,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                color: 'var(--text-muted)',
+                marginBottom: 16,
+                fontWeight: 600,
               }}>
                 Personal details
               </h2>
               <dl style={{
                 display: 'grid',
                 gridTemplateColumns: '140px 1fr',
-                gap: 12, margin: 0,
+                gap: 12,
+                margin: 0,
               }}>
                 <DetailRow label="Full name" value={user.first_name || '—'} />
+                <DetailRow label="Index number" value={user.index_number || '—'} />
                 <DetailRow label="Email" value={user.email || '—'} />
                 <DetailRow label="Level" value={user.level || '—'} />
               </dl>
@@ -423,21 +448,33 @@ export default function Profile() {
         <aside style={{ display: 'grid', gap: 16 }}>
           <InfoCard title="Sign-in ID">
             <code style={{
-              display: 'block', padding: '10px 12px',
-              background: 'var(--slate-100)', borderRadius: 'var(--radius-sm)',
-              fontSize: 13, color: 'var(--slate-700)', wordBreak: 'break-all',
+              display: 'block',
+              padding: '10px 12px',
+              background: 'var(--slate-100)',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: 13,
+              color: 'var(--slate-700)',
+              wordBreak: 'break-all',
             }}>
               {user.username}
             </code>
-            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 10, lineHeight: 1.55 }}>
+            <p style={{
+              fontSize: 12,
+              color: 'var(--text-muted)',
+              marginTop: 10,
+              lineHeight: 1.55,
+            }}>
               You can sign in with your <strong>reference number</strong> or this ID.
             </p>
           </InfoCard>
 
           <InfoCard title="About roles">
             <ul style={{
-              margin: 0, paddingLeft: 18, fontSize: 13,
-              color: 'var(--slate-600)', lineHeight: 1.7,
+              margin: 0,
+              paddingLeft: 18,
+              fontSize: 13,
+              color: 'var(--slate-600)',
+              lineHeight: 1.7,
             }}>
               <li><strong>Student</strong> — browse, download, upload for review</li>
               <li><strong>Rep</strong> — plus approve uploads, post announcements</li>
@@ -453,22 +490,35 @@ export default function Profile() {
 function AvatarDisplay({ src, initials, size = 96, onImageError, imgFailed }) {
   const showImg = src && !imgFailed;
   return (
-    <div style={{
-      width: size, height: size, borderRadius: '50%',
-      background: showImg ? 'var(--slate-100)' : 'var(--brand)',
-      color: '#fff',
-      display: 'grid', placeItems: 'center',
-      fontSize: size * 0.32, fontWeight: 700, textTransform: 'uppercase',
-      overflow: 'hidden', flexShrink: 0,
-      border: '3px solid #fff',
-      boxShadow: '0 4px 14px rgba(15,23,42,0.12)',
-    }}>
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        background: showImg ? 'var(--slate-100)' : 'var(--brand)',
+        color: '#fff',
+        display: 'grid',
+        placeItems: 'center',
+        fontSize: size * 0.32,
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        overflow: 'hidden',
+        flexShrink: 0,
+        border: '3px solid #fff',
+        boxShadow: '0 4px 14px rgba(15,23,42,0.12)',
+      }}
+    >
       {showImg ? (
         <img
           src={src}
           alt=""
           onError={onImageError}
-          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            display: 'block',
+          }}
         />
       ) : (
         initials
@@ -480,7 +530,11 @@ function AvatarDisplay({ src, initials, size = 96, onImageError, imgFailed }) {
 function DetailRow({ label, value }) {
   return (
     <>
-      <dt style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 500 }}>
+      <dt style={{
+        fontSize: 13,
+        color: 'var(--text-muted)',
+        fontWeight: 500,
+      }}>
         {label}
       </dt>
       <dd style={{ margin: 0, fontSize: 14 }}>{value}</dd>
@@ -492,13 +546,18 @@ function CredentialRow({ label, value, mono, hint }) {
   return (
     <div>
       <div style={{
-        fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em',
-        color: 'var(--text-muted)', fontWeight: 600, marginBottom: 4,
+        fontSize: 11,
+        textTransform: 'uppercase',
+        letterSpacing: '0.06em',
+        color: 'var(--text-muted)',
+        fontWeight: 600,
+        marginBottom: 4,
       }}>
         {label}
       </div>
       <div style={{
-        fontSize: mono ? 18 : 16, fontWeight: 700,
+        fontSize: mono ? 18 : 16,
+        fontWeight: 700,
         color: 'var(--text)',
         fontFamily: mono ? 'var(--font-mono)' : 'inherit',
         letterSpacing: mono ? '0.02em' : 'normal',
@@ -507,7 +566,11 @@ function CredentialRow({ label, value, mono, hint }) {
         {value}
       </div>
       {hint && (
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+        <div style={{
+          fontSize: 11,
+          color: 'var(--text-muted)',
+          marginTop: 3,
+        }}>
           {hint}
         </div>
       )}
