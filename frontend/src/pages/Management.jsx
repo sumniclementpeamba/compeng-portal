@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { resourcesApi } from '../api/resources';
 import { api, apiUrl, getToken } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -19,6 +19,24 @@ const ACTION_META = {
 
 function actionMeta(action) {
   return ACTION_META[action] || { icon: '•', verb: action, accent: 'var(--slate-500)' };
+}
+
+
+// ═════════════════════════════════════════════════════════════
+// Profile completion helper
+// ═════════════════════════════════════════════════════════════
+function memberCompletion(m) {
+  const hasPhone = !!(m.phone_number && String(m.phone_number).trim());
+  const hasIndex = !!(m.index_number && String(m.index_number).trim());
+  const missing = [];
+  if (!hasPhone) missing.push('phone');
+  if (!hasIndex) missing.push('index');
+  return {
+    complete: hasPhone && hasIndex,
+    hasPhone,
+    hasIndex,
+    missing,
+  };
 }
 
 
@@ -474,13 +492,24 @@ function MembersPanel() {
   const [msg, setMsg] = useState('');
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [completenessFilter, setCompletenessFilter] = useState('');
   const [busyId, setBusyId] = useState(null);
+  const [summary, setSummary] = useState(null);
 
   const [csvFile, setCsvFile] = useState(null);
   const [csvResult, setCsvResult] = useState(null);
   const [csvBusy, setCsvBusy] = useState(false);
   const [resetBusy, setResetBusy] = useState(false);
   const [downloading, setDownloading] = useState(null);
+
+  async function fetchSummary() {
+    try {
+      const d = await api.get('/members/summary/');
+      setSummary(d);
+    } catch {
+      // silent — summary is a nice-to-have
+    }
+  }
 
   async function downloadMembers(format) {
     setDownloading(format);
@@ -532,7 +561,13 @@ function MembersPanel() {
   }
 
   useEffect(() => { load(); }, [roleFilter]);
+  useEffect(() => { fetchSummary(); }, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
+
+  // After CSV import, refresh summary too
+  useEffect(() => {
+    if (csvResult) fetchSummary();
+  }, [csvResult]);
 
   async function changeRole(member, newRole) {
     setErr('');
@@ -595,6 +630,20 @@ function MembersPanel() {
     reps: members.filter((m) => m.role === 'rep').length,
     admins: members.filter((m) => m.role === 'admin').length,
   };
+
+  // Apply the client-side completeness filter on top of the server-filtered list
+  const visibleMembers = useMemo(() => {
+    if (!completenessFilter) return members;
+    return members.filter((m) => {
+      const { complete } = memberCompletion(m);
+      return completenessFilter === 'complete' ? complete : !complete;
+    });
+  }, [members, completenessFilter]);
+
+  // Counts for the completeness chips — from the summary (global) when available,
+  // otherwise fall back to the current members array
+  const completeCount = summary?.complete ?? members.filter((m) => memberCompletion(m).complete).length;
+  const incompleteCount = summary?.incomplete ?? (members.length - completeCount);
 
   return (
     <div>
@@ -721,6 +770,54 @@ function MembersPanel() {
         <StatCard icon="🛡️" label="Admins" value={totals.admins} accent="var(--danger)" />
       </div>
 
+      {/* Profile completeness summary banner */}
+      {summary && summary.total > 0 && (
+        <div style={{
+          padding: '14px 18px',
+          marginBottom: 16,
+          background: 'linear-gradient(90deg, #eff6ff 0%, #ffffff 100%)',
+          border: '1px solid #bfdbfe',
+          borderLeft: '4px solid var(--brand)',
+          borderRadius: 'var(--radius)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: 'var(--brand)',
+              fontWeight: 700,
+              marginBottom: 2,
+            }}>
+              Profile completeness
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--slate-700)' }}>
+              <strong style={{ color: 'var(--success)' }}>{summary.complete}</strong> complete
+              {' · '}
+              <strong style={{ color: 'var(--warning)' }}>{summary.incomplete}</strong> incomplete
+              {' · '}
+              {summary.missing_phone} missing phone
+              {' · '}
+              {summary.missing_index} missing index
+            </div>
+          </div>
+          <div style={{
+            fontSize: 32,
+            fontWeight: 800,
+            letterSpacing: '-0.04em',
+            color: summary.complete >= summary.total * 0.9 ? 'var(--success)' : 'var(--warning)',
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            {summary.total > 0 ? Math.round((summary.complete / summary.total) * 100) : 0}%
+          </div>
+        </div>
+      )}
+
       <form
         onSubmit={(e) => { e.preventDefault(); load(); }}
         style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}
@@ -736,11 +833,42 @@ function MembersPanel() {
         </button>
       </form>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <FilterChip active={!roleFilter} onClick={() => setRoleFilter('')}>All roles</FilterChip>
         <FilterChip active={roleFilter === 'student'} onClick={() => setRoleFilter('student')}>Students</FilterChip>
         <FilterChip active={roleFilter === 'rep'} onClick={() => setRoleFilter('rep')}>Course reps</FilterChip>
         <FilterChip active={roleFilter === 'admin'} onClick={() => setRoleFilter('admin')}>Admins</FilterChip>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          color: 'var(--text-muted)',
+          fontWeight: 600,
+          marginRight: 4,
+        }}>
+          Profile:
+        </span>
+        <FilterChip
+          active={!completenessFilter}
+          onClick={() => setCompletenessFilter('')}
+        >
+          All ({members.length})
+        </FilterChip>
+        <FilterChip
+          active={completenessFilter === 'complete'}
+          onClick={() => setCompletenessFilter('complete')}
+        >
+          ✓ Complete ({completeCount})
+        </FilterChip>
+        <FilterChip
+          active={completenessFilter === 'incomplete'}
+          onClick={() => setCompletenessFilter('incomplete')}
+        >
+          ⚠ Incomplete ({incompleteCount})
+        </FilterChip>
       </div>
 
       {err && (
@@ -769,17 +897,29 @@ function MembersPanel() {
         </div>
       )}
 
-      {!loading && !err && members.length === 0 && (
+      {!loading && !err && visibleMembers.length === 0 && (
         <EmptyState
           icon="👥"
-          title="No members match"
-          body="Try clearing the search or role filter, or upload a CSV above."
+          title={
+            completenessFilter === 'complete'
+              ? 'No members with complete profiles yet'
+              : completenessFilter === 'incomplete'
+              ? 'Everyone has filled in their details'
+              : 'No members match'
+          }
+          body={
+            completenessFilter === 'complete'
+              ? 'Students need a phone number and index number to be complete.'
+              : completenessFilter === 'incomplete'
+              ? 'All members have both phone and index number. Nice work!'
+              : 'Try clearing the search or filters.'
+          }
         />
       )}
 
-      {!loading && members.length > 0 && (
+      {!loading && visibleMembers.length > 0 && (
         <div className="stagger members-grid">
-          {members.map((m) => (
+          {visibleMembers.map((m) => (
             <MemberCard
               key={m.id}
               member={m}
@@ -803,6 +943,8 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
     ? `${apiUrl(member.avatar_url)}?token=${getToken()}`
     : null;
 
+  const completion = memberCompletion(member);
+
   const roleBadge =
     member.role === 'admin' ? 'badge-danger'
     : member.role === 'rep' ? 'badge-warning'
@@ -816,6 +958,12 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
   const isSelf = member.id === currentUserId;
   const isSuperuser = member.role === 'admin';
   const actionable = canManageRoles && !isSelf && !isSuperuser;
+
+  const missingLabel = completion.missing.length === 0
+    ? null
+    : completion.missing.length === 1
+    ? `Missing ${completion.missing[0]}`
+    : `Missing ${completion.missing.join(' + ')}`;
 
   return (
     <div className="card member-card" style={{ padding: 16 }}>
@@ -877,13 +1025,22 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
               🎓 {member.index_number}
             </div>
           )}
-          <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             <span className={`badge ${roleBadge}`} style={{ fontSize: 10 }}>
               {roleLabel}
             </span>
             {member.level && (
               <span className="badge badge-neutral" style={{ fontSize: 10 }}>
                 Level {member.level}
+              </span>
+            )}
+            {completion.complete ? (
+              <span className="badge badge-success" style={{ fontSize: 10 }}>
+                ✓ Complete
+              </span>
+            ) : (
+              <span className="badge badge-warning" style={{ fontSize: 10 }}>
+                ⚠ {missingLabel}
               </span>
             )}
           </div>

@@ -16,6 +16,7 @@ from accounts.views import (
     NotificationUnreadCountView,
     RegisterView,
     ResetAllPasswordsView,
+    MemberSummaryView,
     notification_stream,
 )
 from audit.views import AuditLogListView
@@ -61,4 +62,5 @@ urlpatterns = [
     path("members/<int:user_id>/role/", MemberRoleUpdateView.as_view(), name="member-role"),
     path("attendance/", include("attendance.urls")),
         path("members/export/", MemberExportView.as_view(), name="members-export"),
+        path("members/summary/", MemberSummaryView.as_view(), name="members-summary"),    
 ] 

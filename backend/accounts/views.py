@@ -627,3 +627,41 @@ def notification_stream(request):
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     return response 
+
+
+# ─────────────────────────────────────────────────────────────
+# Members summary — quick completeness counts (rep/admin)
+# ─────────────────────────────────────────────────────────────
+class MemberSummaryView(APIView):
+    """Counts of members by profile completeness.
+
+    "Complete" = has a non-empty phone_number AND a non-empty
+    index_number. These are the two fields the rep needs to run
+    attendance and reach students. Email and level are optional.
+
+    Reps need this too — they're the ones who chase students
+    for their missing details.
+    """
+
+    permission_classes = [CanReview]
+
+    def get(self, request):
+        qs = User.objects.filter(membership__isnull=False)
+        total = qs.count()
+
+        has_phone = ~Q(phone_number="") & ~Q(phone_number__isnull=True)
+        has_index = ~Q(index_number="") & ~Q(index_number__isnull=True)
+
+        complete = qs.filter(has_phone, has_index).count()
+        incomplete = total - complete
+
+        missing_phone = qs.filter(~has_phone).count()
+        missing_index = qs.filter(~has_index).count()
+
+        return Response({
+            "total": total,
+            "complete": complete,
+            "incomplete": incomplete,
+            "missing_phone": missing_phone,
+            "missing_index": missing_index,
+        })    
