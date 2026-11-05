@@ -27,14 +27,19 @@ from rest_framework.views import APIView
 from accounts.permissions import CanReview, IsAdminRole, role_of
 from audit.models import log
 from .csv_import import import_members_from_csv
-from .models import ClassMembership, Notification, User
+from .models import (
+    ClassMembership,
+    FaceEnrollmentSetting,
+    Notification,
+    User,
+)
 from .serializers import (
     MemberListSerializer,
     NotificationSerializer,
     RegisterSerializer,
     UserSerializer,
 )
- 
+
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
@@ -632,7 +637,7 @@ def notification_stream(request):
     response = StreamingHttpResponse(event_stream(), content_type="text/event-stream")
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
-    return response 
+    return response
 
 
 # ─────────────────────────────────────────────────────────────
@@ -670,29 +675,56 @@ class MemberSummaryView(APIView):
             "incomplete": incomplete,
             "missing_phone": missing_phone,
             "missing_index": missing_index,
-        })    
-    
- 
+        })
+
+
+# ─────────────────────────────────────────────────────────────
+# Face verification — status / enroll / delete
+# ─────────────────────────────────────────────────────────────
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def face_status(request):
     u = request.user
+    setting = FaceEnrollmentSetting.get_solo()
     return Response({
         'enrolled': bool(u.face_embedding),
         'enrolled_at': u.face_enrolled_at,
         'consent': u.face_consent_given,
         'consent_at': u.face_consent_at,
+        # System-wide flags — the frontend uses these to gate the UI
+        'enrollment_open': setting.is_open,
+        'enrollment_updated_at': setting.updated_at,
+        'enrollment_updated_by': (
+            (setting.updated_by.first_name or setting.updated_by.username)
+            if setting.updated_by else None
+        ),
     })
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def face_enroll(request):
+    # Gate: admin must have opened enrollment
+    setting = FaceEnrollmentSetting.get_solo()
+    if not setting.is_open:
+        return Response(
+            {
+                'detail': (
+                    'Face enrollment is currently closed by the course admin. '
+                    'They will open it when it is time for the class to enrol. '
+                    'You can still check in to class if you have already enrolled.'
+                ),
+                'reason': 'enrollment_closed',
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
     if request.data.get('consent') not in ('true', 'True', True):
         return Response(
             {'detail': 'Consent is required to enroll face verification.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
     photo = request.FILES.get('photo')
     if not photo:
         return Response({'detail': 'No photo provided.'}, status=400)
@@ -702,8 +734,11 @@ def face_enroll(request):
     img_bytes = photo.read()
     embedding, err = extract_embedding(img_bytes)
     if err:
-        code = 'No face detected — try better lighting and centre your face.' \
-            if err == 'no_face' else f'Could not process image ({err}).'
+        code = (
+            'No face detected — try better lighting and centre your face.'
+            if err == 'no_face'
+            else f'Could not process image ({err}).'
+        )
         return Response({'detail': code}, status=400)
 
     u = request.user
@@ -721,16 +756,18 @@ def face_enroll(request):
     return Response({'ok': True, 'enrolled_at': u.face_enrolled_at})
 
 
-# ─────────────────────────────────────────────────────────────
-# Face delete — accepts DELETE and POST
-#
-# POST is provided so the frontend's shared api client (which
-# exposes get/post/patch but not delete) can invoke it without
-# touching the shared client used by every other page.
-# ─────────────────────────────────────────────────────────────
 @api_view(['DELETE', 'POST'])
 @permission_classes([IsAuthenticated])
 def face_delete(request):
+    """Delete the requesting user's face data.
+
+    Accepts both DELETE and POST — the frontend's shared api client
+    doesn't expose delete, so POST is provided as an equivalent path
+    for the "Remove my face data" action.
+
+    NOT gated by enrollment_open: students must always be able to
+    remove their biometric data.
+    """
     u = request.user
     if u.face_enrollment_photo:
         u.face_enrollment_photo.delete(save=False)
@@ -743,4 +780,57 @@ def face_delete(request):
         'face_embedding', 'face_enrolled_at', 'face_consent_given',
         'face_consent_at', 'face_enrollment_photo',
     ])
-    return Response(status=204) 
+    return Response(status=204)
+
+
+# ─────────────────────────────────────────────────────────────
+# Face enrollment setting — system-wide toggle (admin)
+# ─────────────────────────────────────────────────────────────
+class FaceEnrollmentSettingView(APIView):
+    """Read/write the face enrollment open/closed flag.
+
+    GET  — any authenticated user (students need to know whether
+           to show the "Start enrollment" button)
+    POST — admin only (opens or closes enrollment system-wide)
+    """
+
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [IsAuthenticated()]
+        return [IsAdminRole()]
+
+    def _serialize(self, setting):
+        return {
+            'is_open': setting.is_open,
+            'updated_at': setting.updated_at,
+            'updated_by_name': (
+                (setting.updated_by.first_name or setting.updated_by.username)
+                if setting.updated_by else None
+            ),
+        }
+
+    def get(self, request):
+        return Response(self._serialize(FaceEnrollmentSetting.get_solo()))
+
+    def post(self, request):
+        is_open = request.data.get('is_open')
+        if not isinstance(is_open, bool):
+            return Response(
+                {'detail': 'is_open must be true or false.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        setting = FaceEnrollmentSetting.get_solo()
+        prev = setting.is_open
+        setting.is_open = is_open
+        setting.updated_by = request.user
+        setting.save()
+
+        log(
+            request.user,
+            'face_enrollment.toggled',
+            is_open=is_open,
+            previous=prev,
+        )
+
+        return Response(self._serialize(setting)) 

@@ -95,3 +95,39 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.user.username} · {self.kind} · {self.title}" 
+    
+
+class FaceEnrollmentSetting(models.Model):
+    """Singleton that toggles whether students can enrol their face.
+
+    Default: closed. The admin must explicitly open it from the
+    dashboard before any new enrollment is accepted.
+
+    Enrolled students are unaffected by the flag — they can still
+    check in, re-enrol, and remove their data at any time. The flag
+    only gates NEW enrollments.
+    """
+    is_open = models.BooleanField(
+        default=False,
+        help_text="Whether students can currently enrol their face.",
+    )
+    updated_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Face enrollment setting"
+        verbose_name_plural = "Face enrollment settings"
+
+    def __str__(self):
+        return f"Face enrollment: {'open' if self.is_open else 'closed'}"
+
+    @classmethod
+    def get_solo(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj    

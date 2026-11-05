@@ -34,3 +34,10 @@ databases:
   - name: compeng-db
     plan: free
     databaseName: compeng_portal 
+
+
+buildCommand: |
+  pip install -r requirements.txt
+  python manage.py migrate --noinput
+  python manage.py collectstatic --noinput
+  python -c "from attendance.face import warmup; print('warmup:', warmup())"    

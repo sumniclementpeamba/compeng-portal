@@ -21,6 +21,7 @@ from accounts.views import (
     face_status,
     face_enroll,
     face_delete,
+    FaceEnrollmentSettingView,
 )
 from audit.views import AuditLogListView
 
@@ -38,10 +39,13 @@ urlpatterns = [
     path("me/", MeView.as_view(), name="me"),
     path("me/avatar/", MeAvatarView.as_view(), name="me-avatar"),
 
-    # ── Face verification ──
+    # Face verification
     path("me/face/status/", face_status, name="face-status"),
     path("me/face/enroll/", face_enroll, name="face-enroll"),
     path("me/face/",        face_delete, name="face-delete"),
+
+    # Face enrollment — system-wide toggle (admin)
+    path("face-enrollment/setting/", FaceEnrollmentSettingView.as_view(), name="face-enrollment-setting"),
 
     path("notifications/", NotificationListView.as_view(), name="notifications"),
     path("notifications/unread-count/", NotificationUnreadCountView.as_view(), name="notifications-unread-count"),
