@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { API_BASE, api, apiUrl, getToken } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { PageHeader, StatCard, EmptyState } from '../components/PageUI';
 import { computeFingerprint, getCurrentPosition } from '../utils/deviceFingerprint';
+import FaceCapture from '../components/FaceCapture';
 
 
 const STATUS_META = {
@@ -13,6 +15,26 @@ const STATUS_META = {
 };
 
 
+// ═════════════════════════════════════════════════════════════
+// Modal keyframes (rendered once, injected into the page)
+// ═════════════════════════════════════════════════════════════
+const ModalStyles = () => (
+  <style>{`
+    @keyframes faceModalFadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes faceModalSlideDown {
+      from { opacity: 0; transform: translateY(-16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  `}</style>
+);
+
+
+// ═════════════════════════════════════════════════════════════
+// Utilities
+// ═════════════════════════════════════════════════════════════
 function useNow(intervalMs = 1000) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -32,6 +54,28 @@ function formatCountdown(ms) {
 }
 
 
+function formatOpensAt(opensAtIso, nowMs) {
+  const opens = new Date(opensAtIso).getTime();
+  const diffSec = Math.round((opens - nowMs) / 1000);
+  if (diffSec <= 0) return 'Opens now';
+  if (diffSec < 3600) {
+    const mins = Math.ceil(diffSec / 60);
+    return `Opens in ${mins} min`;
+  }
+  const opensDate = new Date(opensAtIso);
+  const today = new Date(nowMs);
+  const tomorrow = new Date(nowMs + 86400000);
+  const sameDay = (a, b) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+  const time = opensDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (sameDay(opensDate, today)) return `Opens today at ${time}`;
+  if (sameDay(opensDate, tomorrow)) return `Opens tomorrow at ${time}`;
+  return `Opens ${opensDate.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })} at ${time}`;
+}
+
+
 export default function Attendance() {
   const { user } = useAuth();
   if (!user) return null;
@@ -39,37 +83,38 @@ export default function Attendance() {
   const isAdmin = user.role === 'admin';
   const isRep = user.is_class_rep === true;
 
-  if (isAdmin) {
-    return <AdminView canCreateSessions={isRep} />;
-  }
+  if (isAdmin) return <AdminView canCreateSessions={isRep} />;
   return <StudentView isRep={isRep} />;
 }
 
 
 // ═════════════════════════════════════════════════════════════
-// STUDENT VIEW — students AND pure reps (no admin flag)
+// STUDENT VIEW — timetable-driven, no manual session creation
 // ═════════════════════════════════════════════════════════════
 function StudentView({ isRep }) {
   const [data, setData] = useState(null);
   const [semester, setSemester] = useState(null);
+  const [upcoming, setUpcoming] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [flash, setFlash] = useState('');
   const [checkingInId, setCheckingInId] = useState(null);
   const [checkInProgress, setCheckInProgress] = useState('');
   const [rejection, setRejection] = useState(null);
-  const [showNewForm, setShowNewForm] = useState(false);
+  const [faceModalSession, setFaceModalSession] = useState(null);
 
   const now = useNow(1000);
 
   async function refresh() {
     try {
-      const [d, sem] = await Promise.all([
+      const [d, sem, up] = await Promise.all([
         api.get('/attendance/me/'),
         api.get('/attendance/me/semester/').catch(() => null),
+        api.get('/attendance/upcoming/?limit=5').catch(() => ({ results: [] })),
       ]);
       setData(d);
       setSemester(sem);
+      setUpcoming(up?.results || []);
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -86,12 +131,10 @@ function StudentView({ isRep }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function checkIn(sessionId, session) {
-    setCheckingInId(sessionId);
+  async function submitCheckIn(session, photoBlob) {
+    setCheckingInId(session.id);
     setCheckInProgress('Getting your location…');
-    setErr('');
-    setFlash('');
-    setRejection(null);
+    setErr(''); setFlash(''); setRejection(null);
 
     try {
       const coords = await getCurrentPosition();
@@ -99,51 +142,61 @@ function StudentView({ isRep }) {
         coords ? 'Verifying location…' : 'Sending without location (will be flagged)…'
       );
       const fingerprint = await computeFingerprint();
-      setCheckInProgress('Checking in…');
+      setCheckInProgress('Verifying face…');
 
-      const payload = {};
+      const fd = new FormData();
+      fd.append('photo', photoBlob, 'checkin.jpg');
       if (coords) {
-        payload.gps = {
+        fd.append('gps', JSON.stringify({
           lat: coords.lat, lng: coords.lng, accuracy: coords.accuracy,
-        };
+        }));
       }
-      if (fingerprint) payload.fingerprint = fingerprint;
+      if (fingerprint) fd.append('fingerprint', fingerprint);
 
       const res = await api.post(
-        `/attendance/sessions/${sessionId}/self-check-in/`, payload
+        `/attendance/sessions/${session.id}/self-check-in/`, fd
       );
 
       if (res.needs_review) {
         setFlash(
           `Checked in — but your record is flagged for rep review ` +
-          `(${(res.flags || []).join(', ')}). Contact your rep if this ` +
-          `is wrong.`
+          `(${(res.flags || []).join(', ')}). Contact your rep if this is wrong.`
         );
       } else {
-        setFlash(
-          res.status === 'late'
-            ? 'Checked in — marked LATE.'
-            : 'Checked in — marked present.'
-        );
+        setFlash(res.status === 'late' ? 'Checked in — marked LATE.' : 'Checked in — marked present.');
       }
+      setFaceModalSession(null);
       await refresh();
     } catch (e) {
       if (e.status === 403 && e.data?.reason === 'outside_geofence') {
+        setFaceModalSession(null);
         setRejection({
-          sessionId,
+          sessionId: session.id,
           sessionTitle: session?.title || 'This class',
           detail: e.data.detail,
           distance: e.data.distance_meters,
           radius: e.data.radius_meters,
         });
-      } else if (e.status === 403 && e.data?.reason === 'duplicate_device') {
-        setErr(
-          'This device has already been used to check in another ' +
-          'student for this class. Contact your course rep if this is a mistake.'
-        );
-      } else {
-        setErr(e.message || 'Check-in failed. Please try again.');
+        return;
       }
+      if (e.status === 403 && e.data?.reason === 'duplicate_device') {
+        setFaceModalSession(null);
+        setErr(
+          'This device has already been used to check in another student ' +
+          'for this class. Contact your course rep if this is a mistake.'
+        );
+        return;
+      }
+      let msg;
+      if (e.status === 403 && e.data?.reason === 'face_mismatch') {
+        msg = e.data.detail ||
+          "That doesn't match the photo on your profile. Re-enroll in Profile if this is wrong.";
+      } else if (e.status === 400 && e.data?.reason === 'no_face') {
+        msg = 'No face detected — better lighting and centre your face.';
+      } else {
+        msg = e.message || 'Check-in failed. Please try again.';
+      }
+      throw new Error(msg);
     } finally {
       setCheckingInId(null);
       setCheckInProgress('');
@@ -163,69 +216,37 @@ function StudentView({ isRep }) {
   const activeCheckIns = data?.active_check_ins || [];
 
   const pct = s.percentage || 0;
-  const pctColor =
-    pct >= 75 ? 'var(--success)'
-    : pct >= 60 ? 'var(--warning)'
-    : 'var(--danger)';
+  const pctColor = pct >= 75 ? 'var(--success)' : pct >= 60 ? 'var(--warning)' : 'var(--danger)';
 
   return (
     <div className="animate-fade-up">
+      <ModalStyles />
+
       <PageHeader
         eyebrow={isRep ? 'My record · Class rep' : 'My record'}
         title="Attendance"
         subtitle={
           isRep
-            ? 'Check yourself in. Review flagged check-ins from your class.'
-            : 'Check yourself in during class, then review your full history.'
-        }
-        actions={
-          isRep && !showNewForm ? (
-            <button
-              onClick={() => setShowNewForm(true)}
-              className="btn-primary"
-              style={{ padding: '9px 16px' }}
-            >
-              ＋ Create session
-            </button>
-          ) : null
+            ? 'Attendance opens automatically when your classes start. Review flagged check-ins from your class.'
+            : 'Attendance opens automatically when your classes start, per your timetable.'
         }
       />
 
-      {showNewForm && (
-        <NewSessionForm
-          onCreated={() => {
-            setShowNewForm(false);
-            setFlash('Session created — check-in is open.');
-            refresh();
-          }}
-          onCancel={() => setShowNewForm(false)}
-        />
-      )}
-
-      {/* Reps: flagged check-ins review */}
       {isRep && <RepPendingReviews onReviewed={refresh} />}
 
-      {/* Rejection card */}
       {rejection && (
-        <div
-          style={{
-            padding: 20,
-            marginBottom: 20,
-            background: 'var(--danger-bg)',
-            border: '1px solid #fecaca',
-            borderLeft: '4px solid var(--danger)',
-            borderRadius: 'var(--radius)',
-          }}
-        >
+        <div style={{
+          padding: 20, marginBottom: 20,
+          background: 'var(--danger-bg)', border: '1px solid #fecaca',
+          borderLeft: '4px solid var(--danger)', borderRadius: 'var(--radius)',
+        }}>
           <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
             <span style={{ fontSize: 28, lineHeight: 1 }}>📍</span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--danger)', marginBottom: 6 }}>
                 You appear to be outside the classroom
               </div>
-              <p style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 8, lineHeight: 1.55 }}>
-                {rejection.detail}
-              </p>
+              <p style={{ fontSize: 13, color: 'var(--danger)', marginBottom: 8, lineHeight: 1.55 }}>{rejection.detail}</p>
               {rejection.distance != null && (
                 <p style={{ fontSize: 12, color: 'var(--danger)', margin: '0 0 12px', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
                   Distance from classroom: {Math.round(rejection.distance)}m · Allowed: {rejection.radius}m
@@ -234,10 +255,7 @@ function StudentView({ isRep }) {
               <p style={{ fontSize: 12, color: 'var(--slate-700)', marginBottom: 14, lineHeight: 1.55 }}>
                 GPS can be inaccurate indoors. If you are in class and this is a mistake, message your course rep.
               </p>
-              <button
-                onClick={() => setRejection(null)}
-                style={{ padding: '6px 14px', fontSize: 13, borderRadius: 'var(--radius-sm)' }}
-              >
+              <button onClick={() => setRejection(null)} style={{ padding: '6px 14px', fontSize: 13, borderRadius: 'var(--radius-sm)' }}>
                 Dismiss
               </button>
             </div>
@@ -245,9 +263,7 @@ function StudentView({ isRep }) {
         </div>
       )}
 
-      {semester && <SemesterSummaryCard data={semester} />}
-
-      {/* Active check-in banners */}
+      {/* Active check-in banners — sessions created automatically from timetable */}
       {activeCheckIns.length > 0 && (
         <div style={{ display: 'grid', gap: 10, marginBottom: 20 }}>
           {activeCheckIns.map((session) => {
@@ -261,18 +277,14 @@ function StudentView({ isRep }) {
               session.classroom_lng !== null;
 
             return (
-              <div
-                key={session.id}
-                style={{
-                  padding: 20,
-                  borderRadius: 'var(--radius)',
-                  background: urgent
-                    ? 'linear-gradient(135deg, #fee2e2 0%, #ffffff 100%)'
-                    : 'linear-gradient(135deg, #dcfce7 0%, #ffffff 100%)',
-                  border: `1px solid ${urgent ? '#fecaca' : '#bbf7d0'}`,
-                  borderLeft: `4px solid ${urgent ? 'var(--danger)' : 'var(--success)'}`,
-                }}
-              >
+              <div key={session.id} style={{
+                padding: 20, borderRadius: 'var(--radius)',
+                background: urgent
+                  ? 'linear-gradient(135deg, #fee2e2 0%, #ffffff 100%)'
+                  : 'linear-gradient(135deg, #dcfce7 0%, #ffffff 100%)',
+                border: `1px solid ${urgent ? '#fecaca' : '#bbf7d0'}`,
+                borderLeft: `4px solid ${urgent ? 'var(--danger)' : 'var(--success)'}`,
+              }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
                   <div style={{ flex: 1, minWidth: 200 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: urgent ? 'var(--danger)' : 'var(--success)', marginBottom: 4 }}>
@@ -286,36 +298,73 @@ function StudentView({ isRep }) {
                     <div style={{ fontSize: 13, marginTop: 8, fontWeight: 600, color: urgent ? 'var(--danger)' : 'var(--slate-700)', fontVariantNumeric: 'tabular-nums' }}>
                       ⏱ Closes in {formatCountdown(remaining)}
                     </div>
-                    {requiresGps && !isCheckingIn && (
+                    {requiresGps && (
                       <div style={{ fontSize: 11, color: 'var(--slate-600)', marginTop: 6 }}>
-                        📍 Location required — must be within {session.geofence_radius_meters}m of the classroom
+                        📍 Location required — must be within {session.geofence_radius_meters}m
                       </div>
                     )}
-                    {isCheckingIn && checkInProgress && (
-                      <div style={{ fontSize: 12, color: 'var(--slate-700)', marginTop: 6, fontWeight: 500 }}>
-                        {checkInProgress}
-                      </div>
-                    )}
+                    <div style={{ fontSize: 11, color: 'var(--slate-600)', marginTop: 4 }}>
+                      📷 Face verification — auto-captures when you're in view
+                    </div>
                   </div>
                   <button
-                    onClick={() => checkIn(session.id, session)}
+                    onClick={() => setFaceModalSession(session)}
                     disabled={isCheckingIn || remaining <= 0}
                     className="btn-primary"
                     style={{ padding: '12px 24px', fontSize: 15, fontWeight: 700, minWidth: 140 }}
                   >
-                    {isCheckingIn ? (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                        <span className="spinner" style={{ width: 14, height: 14, borderWidth: 2 }} />
-                        {checkInProgress || 'Checking in…'}
-                      </span>
-                    ) : (
-                      "I'm here ✓"
-                    )}
+                    I'm here ✓
                   </button>
                 </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Coming up — timetable-driven */}
+      {upcoming.length > 0 && (
+        <div className="card" style={{ padding: 20, marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
+            <h2 style={{ fontSize: 14, fontWeight: 700, margin: 0 }}>📅 Coming up</h2>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Auto-opens from your timetable
+            </span>
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {upcoming.map((u) => {
+              const isOpen = u.is_open_now;
+              return (
+                <div key={`${u.timetable_entry_id}-${u.date}`} style={{
+                  padding: '10px 14px',
+                  background: isOpen ? 'var(--success-bg)' : 'var(--slate-50)',
+                  border: `1px solid ${isOpen ? '#bbf7d0' : 'var(--border)'}`,
+                  borderRadius: 'var(--radius-sm)',
+                  display: 'flex', justifyContent: 'space-between',
+                  alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                        {u.course_code}
+                      </span>
+                      {u.course_title && (
+                        <span style={{ fontSize: 12, color: 'var(--slate-600)' }}>{u.course_title}</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      {new Date(u.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}
+                      {' · '}{u.start_time}–{u.end_time}
+                      {u.room && ` · ${u.room}`}
+                    </div>
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: isOpen ? 'var(--success)' : 'var(--slate-600)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    {isOpen ? '🟢 OPEN NOW' : formatOpensAt(u.check_in_opens_at, now)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -325,7 +374,7 @@ function StudentView({ isRep }) {
         </div>
       )}
 
-      {err && (
+      {err && !faceModalSession && (
         <div role="alert" style={{ padding: '12px 16px', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 14, marginBottom: 16, border: '1px solid #fecaca' }}>
           {err}
         </div>
@@ -334,8 +383,12 @@ function StudentView({ isRep }) {
       {records.length === 0 ? (
         <EmptyState
           icon="📅"
-          title="No sessions recorded yet"
-          body="When your course rep schedules classes on the timetable, attendance will appear here automatically."
+          title="No attendance recorded yet"
+          body={
+            upcoming.length > 0
+              ? 'When your next class starts, check-in will open automatically on this page.'
+              : 'Your timetable drives attendance. Add courses to the timetable to enable auto check-in.'
+          }
         />
       ) : (
         <>
@@ -364,6 +417,8 @@ function StudentView({ isRep }) {
             </div>
           </div>
 
+          {semester && <SemesterSummaryCard data={semester} />}
+
           <h2 style={{ fontSize: 16, marginBottom: 12 }}>Session history</h2>
           <div className="stagger" style={{ display: 'grid', gap: 8 }}>
             {records.map((r) => {
@@ -382,9 +437,7 @@ function StudentView({ isRep }) {
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       {r.session_title}
-                      {isFlagged && (
-                        <span className="badge badge-warning" style={{ fontSize: 10 }}>⚠ Review</span>
-                      )}
+                      {isFlagged && <span className="badge badge-warning" style={{ fontSize: 10 }}>⚠ Review</span>}
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
                       {new Date(r.session_date).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
@@ -407,6 +460,125 @@ function StudentView({ isRep }) {
           </div>
         </>
       )}
+
+      {/* ═══════════════════════════════════════════════════
+          Check-in modal — portaled to document.body so
+          ancestor transforms can't move it out of the viewport
+      ═══════════════════════════════════════════════════ */}
+      {faceModalSession && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.55)',
+            backdropFilter: 'blur(6px)',
+            WebkitBackdropFilter: 'blur(6px)',
+            zIndex: 9999,
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'flex-start',
+            paddingTop: 'max(6vh, 40px)',
+            paddingLeft: 16,
+            paddingRight: 16,
+            paddingBottom: 24,
+            overflowY: 'auto',
+            animation: 'faceModalFadeIn 200ms ease-out',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !checkingInId) {
+              setFaceModalSession(null);
+              setErr('');
+            }
+          }}
+        >
+          <div
+            style={{
+              background: '#fff',
+              borderRadius: 20,
+              width: '100%',
+              maxWidth: 420,
+              padding: '20px 20px 22px',
+              boxShadow:
+                '0 24px 60px rgba(15,23,42,0.28), 0 8px 20px rgba(15,23,42,0.12)',
+              display: 'grid',
+              gap: 16,
+              animation: 'faceModalSlideDown 280ms cubic-bezier(0.2, 0.8, 0.2, 1)',
+            }}
+          >
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 8,
+              paddingBottom: 4,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: '50%',
+                  background: 'linear-gradient(135deg, var(--brand) 0%, var(--brand-600, #1d4ed8) 100%)',
+                  display: 'grid', placeItems: 'center',
+                  fontSize: 18, flexShrink: 0,
+                }}>
+                  🧑
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.01em' }}>
+                    Verify it's you
+                  </div>
+                  <div style={{
+                    fontSize: 12, color: 'var(--text-muted)', marginTop: 1,
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}>
+                    {faceModalSession.title}
+                  </div>
+                </div>
+              </div>
+              {!checkingInId && (
+                <button
+                  onClick={() => { setFaceModalSession(null); setErr(''); }}
+                  style={{
+                    width: 32, height: 32, borderRadius: 8,
+                    background: 'var(--slate-100)',
+                    border: 'none', cursor: 'pointer',
+                    display: 'grid', placeItems: 'center',
+                    fontSize: 14, color: 'var(--slate-600)',
+                    flexShrink: 0,
+                  }}
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+
+            <FaceCapture
+              onCapture={(blob) => submitCheckIn(faceModalSession, blob)}
+              disabled={!!checkingInId}
+            />
+
+            {checkingInId && checkInProgress && (
+              <div style={{
+                fontSize: 13, color: 'var(--slate-700)',
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '10px 12px', background: 'var(--slate-50)',
+                borderRadius: 10,
+              }}>
+                <span className="spinner spinner-dark" style={{ width: 14, height: 14, borderWidth: 2 }} />
+                {checkInProgress}
+              </div>
+            )}
+
+            <div style={{
+              fontSize: 11, color: 'var(--text-muted)',
+              textAlign: 'center', lineHeight: 1.5,
+              paddingTop: 4, borderTop: '1px solid var(--border)',
+            }}>
+              Face and location are verified together. Not you? Tap Close.
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
@@ -423,7 +595,7 @@ function StatMini({ label, value, color }) {
 
 
 // ═════════════════════════════════════════════════════════════
-// REP PENDING REVIEWS — flag review UI for reps
+// REP PENDING REVIEWS
 // ═════════════════════════════════════════════════════════════
 function RepPendingReviews({ onReviewed }) {
   const [sessions, setSessions] = useState([]);
@@ -442,16 +614,11 @@ function RepPendingReviews({ onReviewed }) {
         (s) => (s.needs_review_count || 0) > 0 && !s.cancelled
       );
       setSessions(withFlagged);
-    } catch (e) {
-      setErr(e.message);
-    }
+    } catch (e) { setErr(e.message); }
   }
 
   async function expand(sessionId) {
-    if (expandedId === sessionId) {
-      setExpandedId(null);
-      return;
-    }
+    if (expandedId === sessionId) { setExpandedId(null); return; }
     setExpandedId(sessionId);
     if (flaggedRecords[sessionId]) return;
     setLoadingId(sessionId);
@@ -459,21 +626,15 @@ function RepPendingReviews({ onReviewed }) {
       const d = await api.get(`/attendance/sessions/${sessionId}/`);
       const flagged = (d.records || []).filter((r) => r.needs_review);
       setFlaggedRecords((prev) => ({ ...prev, [sessionId]: flagged }));
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setLoadingId(null);
-    }
+    } catch (e) { setErr(e.message); }
+    finally { setLoadingId(null); }
   }
 
   async function review(recordId, sessionId, decision) {
     setReviewingId(recordId);
     setErr('');
     try {
-      const updated = await api.post(
-        `/attendance/records/${recordId}/review/`,
-        { decision }
-      );
+      const updated = await api.post(`/attendance/records/${recordId}/review/`, { decision });
       setFlaggedRecords((prev) => ({
         ...prev,
         [sessionId]: (prev[sessionId] || [])
@@ -482,46 +643,25 @@ function RepPendingReviews({ onReviewed }) {
       }));
       await load();
       onReviewed?.();
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setReviewingId(null);
-    }
+    } catch (e) { setErr(e.message); }
+    finally { setReviewingId(null); }
   }
 
   if (sessions.length === 0) return null;
 
-  const total = sessions.reduce(
-    (sum, s) => sum + (s.needs_review_count || 0), 0
-  );
+  const total = sessions.reduce((sum, s) => sum + (s.needs_review_count || 0), 0);
 
   return (
     <div style={{ marginBottom: 24 }}>
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: 8,
-        marginBottom: 12,
-      }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
         <h2 style={{ fontSize: 16, display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
           ⚠ Flagged check-ins
-          <span className="badge badge-warning" style={{ fontSize: 10 }}>
-            {total} to review
-          </span>
+          <span className="badge badge-warning" style={{ fontSize: 10 }}>{total} to review</span>
         </h2>
       </div>
 
       {err && (
-        <div style={{
-          padding: '10px 14px',
-          background: 'var(--danger-bg)',
-          color: 'var(--danger)',
-          borderRadius: 'var(--radius-sm)',
-          fontSize: 13,
-          marginBottom: 12,
-        }}>{err}</div>
+        <div style={{ padding: '10px 14px', background: 'var(--danger-bg)', color: 'var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 13, marginBottom: 12 }}>{err}</div>
       )}
 
       <div style={{ display: 'grid', gap: 8 }}>
@@ -532,22 +672,13 @@ function RepPendingReviews({ onReviewed }) {
 
           return (
             <div key={s.id} className="card" style={{ padding: 0, overflow: 'hidden', borderLeft: '3px solid var(--warning)' }}>
-              <button
-                onClick={() => expand(s.id)}
-                style={{
-                  width: '100%',
-                  padding: '12px 16px',
-                  background: isOpen ? 'var(--slate-50)' : '#fff',
-                  border: 'none',
-                  cursor: 'pointer',
-                  textAlign: 'left',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  gap: 12,
-                  flexWrap: 'wrap',
-                }}
-              >
+              <button onClick={() => expand(s.id)} style={{
+                width: '100%', padding: '12px 16px',
+                background: isOpen ? 'var(--slate-50)' : '#fff',
+                border: 'none', cursor: 'pointer', textAlign: 'left',
+                display: 'flex', justifyContent: 'space-between',
+                alignItems: 'center', gap: 12, flexWrap: 'wrap',
+              }}>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{s.title}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
@@ -556,12 +687,8 @@ function RepPendingReviews({ onReviewed }) {
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                  <span className="badge badge-warning" style={{ fontSize: 10 }}>
-                    ⚠ {s.needs_review_count} to review
-                  </span>
-                  <span style={{ color: 'var(--slate-400)', fontSize: 12 }}>
-                    {isOpen ? '▲' : '▼'}
-                  </span>
+                  <span className="badge badge-warning" style={{ fontSize: 10 }}>⚠ {s.needs_review_count} to review</span>
+                  <span style={{ color: 'var(--slate-400)', fontSize: 12 }}>{isOpen ? '▲' : '▼'}</span>
                 </div>
               </button>
 
@@ -572,31 +699,27 @@ function RepPendingReviews({ onReviewed }) {
                       <span className="spinner spinner-dark" style={{ width: 20, height: 20, borderWidth: 2 }} />
                     </div>
                   ) : records.length === 0 ? (
-                    <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 12 }}>
-                      All flagged check-ins reviewed. ✓
-                    </p>
+                    <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 12 }}>All flagged check-ins reviewed. ✓</p>
                   ) : (
                     <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
                       {records.map((r) => (
-                        <div key={r.id} style={{
-                          padding: 12,
-                          background: 'var(--warning-bg)',
-                          border: '1px solid #fde68a',
-                          borderRadius: 'var(--radius-sm)',
-                        }}>
+                        <div key={r.id} style={{ padding: 12, background: 'var(--warning-bg)', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, flexWrap: 'wrap' }}>
                             <div style={{ minWidth: 0, flex: 1 }}>
                               <div style={{ fontWeight: 600, fontSize: 13 }}>
                                 {r.user_name}
                                 {r.reference_number && (
-                                  <span style={{ fontSize: 10, color: 'var(--slate-600)', marginLeft: 6, fontFamily: 'var(--font-mono)' }}>
-                                    {r.reference_number}
-                                  </span>
+                                  <span style={{ fontSize: 10, color: 'var(--slate-600)', marginLeft: 6, fontFamily: 'var(--font-mono)' }}>{r.reference_number}</span>
                                 )}
                               </div>
                               <div style={{ fontSize: 11, color: 'var(--warning)', marginTop: 4, fontFamily: 'var(--font-mono)', fontWeight: 600 }}>
                                 ⚠ {(r.check_in_flags || []).join(', ')}
                               </div>
+                              {r.face_distance != null && (
+                                <div style={{ fontSize: 11, color: 'var(--slate-600)', marginTop: 2 }}>
+                                  🧑 Face distance: {r.face_distance} {r.face_verified ? '(matched)' : '(no match)'}
+                                </div>
+                              )}
                               {r.check_in_gps_accuracy && (
                                 <div style={{ fontSize: 11, color: 'var(--slate-600)', marginTop: 2 }}>
                                   🎯 Accuracy: ±{Math.round(r.check_in_gps_accuracy)}m
@@ -608,45 +731,16 @@ function RepPendingReviews({ onReviewed }) {
                                 </div>
                               )}
                               <div style={{ fontSize: 11, color: 'var(--slate-600)', marginTop: 2 }}>
-                                📝 Current status:{' '}
-                                <strong style={{ textTransform: 'capitalize' }}>
-                                  {r.status}
-                                </strong>
+                                📝 Current status: <strong style={{ textTransform: 'capitalize' }}>{r.status}</strong>
                               </div>
                             </div>
                             <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                              <button
-                                onClick={() => review(r.id, s.id, 'approve')}
-                                disabled={reviewingId === r.id}
-                                style={{
-                                  padding: '6px 14px',
-                                  fontSize: 12,
-                                  fontWeight: 600,
-                                  borderRadius: 'var(--radius-pill)',
-                                  background: 'var(--success)',
-                                  color: '#fff',
-                                  border: 'none',
-                                  cursor: reviewingId === r.id ? 'not-allowed' : 'pointer',
-                                  opacity: reviewingId === r.id ? 0.6 : 1,
-                                }}
-                              >
+                              <button onClick={() => review(r.id, s.id, 'approve')} disabled={reviewingId === r.id}
+                                style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 'var(--radius-pill)', background: 'var(--success)', color: '#fff', border: 'none', cursor: reviewingId === r.id ? 'not-allowed' : 'pointer', opacity: reviewingId === r.id ? 0.6 : 1 }}>
                                 {reviewingId === r.id ? '…' : '✓ Approve'}
                               </button>
-                              <button
-                                onClick={() => review(r.id, s.id, 'reject')}
-                                disabled={reviewingId === r.id}
-                                style={{
-                                  padding: '6px 14px',
-                                  fontSize: 12,
-                                  fontWeight: 600,
-                                  borderRadius: 'var(--radius-pill)',
-                                  background: 'var(--danger)',
-                                  color: '#fff',
-                                  border: 'none',
-                                  cursor: reviewingId === r.id ? 'not-allowed' : 'pointer',
-                                  opacity: reviewingId === r.id ? 0.6 : 1,
-                                }}
-                              >
+                              <button onClick={() => review(r.id, s.id, 'reject')} disabled={reviewingId === r.id}
+                                style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 'var(--radius-pill)', background: 'var(--danger)', color: '#fff', border: 'none', cursor: reviewingId === r.id ? 'not-allowed' : 'pointer', opacity: reviewingId === r.id ? 0.6 : 1 }}>
                                 ✕ Reject
                               </button>
                             </div>
@@ -675,11 +769,7 @@ function SemesterSummaryCard({ data }) {
   const byCourse = data.by_course || [];
 
   const pct = s.percentage_vs_expected || 0;
-  const pctColor =
-    pct >= 75 ? 'var(--success)'
-    : pct >= 60 ? 'var(--warning)'
-    : 'var(--danger)';
-
+  const pctColor = pct >= 75 ? 'var(--success)' : pct >= 60 ? 'var(--warning)' : 'var(--danger)';
   const progress = sem.progress || {};
   const progressPct = progress.percent || 0;
   const hasData = (s.expected_to_date || 0) > 0 || (s.recorded || 0) > 0;
@@ -688,9 +778,7 @@ function SemesterSummaryCard({ data }) {
     <div className="card" style={{ padding: 24, marginBottom: 20, borderLeft: '3px solid var(--brand)', background: 'linear-gradient(180deg, #eff6ff 0%, #ffffff 60%)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--brand)', fontWeight: 700, marginBottom: 2 }}>
-            Semester summary
-          </div>
+          <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--brand)', fontWeight: 700, marginBottom: 2 }}>Semester summary</div>
           <div style={{ fontSize: 14, color: 'var(--slate-600)' }}>{sem.name}</div>
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
@@ -701,21 +789,14 @@ function SemesterSummaryCard({ data }) {
       </div>
 
       {!hasData ? (
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-          No attendance data yet for this semester.
-        </p>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>No attendance data yet for this semester.</p>
       ) : (
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexWrap: 'wrap', marginBottom: 20 }}>
             <div style={{ textAlign: 'center', minWidth: 120 }}>
-              <div style={{ fontSize: 52, fontWeight: 800, letterSpacing: '-0.04em', lineHeight: 1, color: pctColor, fontVariantNumeric: 'tabular-nums' }}>
-                {pct}%
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
-                Semester attendance
-              </div>
+              <div style={{ fontSize: 52, fontWeight: 800, letterSpacing: '-0.04em', lineHeight: 1, color: pctColor, fontVariantNumeric: 'tabular-nums' }}>{pct}%</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>Semester attendance</div>
             </div>
-
             <div style={{ flex: 1, minWidth: 220 }}>
               <div style={{ fontSize: 13, color: 'var(--slate-600)', marginBottom: 8 }}>
                 Attended <strong>{s.attended}</strong> of <strong>{s.expected_to_date}</strong> expected so far
@@ -747,17 +828,13 @@ function SemesterSummaryCard({ data }) {
 
           {byCourse.length > 0 && (
             <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', fontWeight: 600, marginBottom: 12 }}>
-                By course
-              </div>
+              <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)', fontWeight: 600, marginBottom: 12 }}>By course</div>
               <div style={{ display: 'grid', gap: 8 }}>
                 {byCourse.map((c) => (
                   <div key={c.course_code} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '8px 12px', background: 'var(--slate-50)', borderRadius: 'var(--radius-sm)', flexWrap: 'wrap' }}>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{c.course_code}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                        {c.attended} / {c.expected} attended
-                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{c.attended} / {c.expected} attended</div>
                     </div>
                     <span style={{ fontSize: 13, fontWeight: 700, color: c.percentage_vs_expected >= 75 ? 'var(--success)' : c.percentage_vs_expected >= 60 ? 'var(--warning)' : 'var(--danger)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
                       {c.percentage_vs_expected}%
@@ -785,7 +862,7 @@ function SemMini({ label, value, color }) {
 
 
 // ═════════════════════════════════════════════════════════════
-// NEW SESSION FORM
+// NEW SESSION FORM — admin one-off fallback only
 // ═════════════════════════════════════════════════════════════
 function NewSessionForm({ onCreated, onCancel }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -796,9 +873,7 @@ function NewSessionForm({ onCreated, onCancel }) {
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
   async function submit(e) {
-    e.preventDefault();
-    setErr('');
-    setBusy(true);
+    e.preventDefault(); setErr(''); setBusy(true);
     try {
       const payload = {
         title: form.title, date: form.date, course_name: form.course_name,
@@ -808,11 +883,8 @@ function NewSessionForm({ onCreated, onCancel }) {
       };
       const created = await api.post('/attendance/sessions/', payload);
       onCreated(created);
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
   }
 
   const LBL = { fontSize: 13, fontWeight: 500, color: 'var(--slate-700)', display: 'block' };
@@ -820,46 +892,24 @@ function NewSessionForm({ onCreated, onCancel }) {
   return (
     <form onSubmit={submit} className="card" style={{ padding: 20, marginBottom: 20, display: 'grid', gap: 12, borderLeft: '3px solid var(--brand)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700 }}>Create manual session</h3>
-        <button type="button" onClick={onCancel} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, padding: 0 }}>
-          Cancel ✕
-        </button>
+        <h3 style={{ fontSize: 15, fontWeight: 700 }}>Create one-off session (admin fallback)</h3>
+        <button type="button" onClick={onCancel} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 13, padding: 0 }}>Cancel ✕</button>
       </div>
+      <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0, padding: '8px 12px', background: 'var(--slate-50)', borderLeft: '2px solid var(--brand)', borderRadius: 'var(--radius-sm)', lineHeight: 1.55 }}>
+        Normal attendance opens <strong>automatically from the timetable</strong>. Use this only for makeup classes or guest lectures not on the timetable.
+      </p>
 
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
-        <label style={LBL}>
-          Title *
-          <input value={form.title} onChange={set('title')} required placeholder="e.g. CSC301 Lab Makeup" style={{ width: '100%', marginTop: 4 }} />
-        </label>
-        <label style={LBL}>
-          Date *
-          <input type="date" value={form.date} onChange={set('date')} required style={{ width: '100%', marginTop: 4 }} />
-        </label>
+        <label style={LBL}>Title *<input value={form.title} onChange={set('title')} required placeholder="e.g. CSC301 Lab Makeup" style={{ width: '100%', marginTop: 4 }} /></label>
+        <label style={LBL}>Date *<input type="date" value={form.date} onChange={set('date')} required style={{ width: '100%', marginTop: 4 }} /></label>
       </div>
-
-      <label style={LBL}>
-        Course (optional)
-        <input value={form.course_name} onChange={set('course_name')} placeholder="e.g. CSC301" style={{ width: '100%', marginTop: 4 }} />
-      </label>
-
-      <label style={LBL}>
-        Notes (optional)
-        <textarea value={form.notes} onChange={set('notes')} rows={2} placeholder="Topic, reason for makeup, etc." style={{ width: '100%', marginTop: 4 }} />
-      </label>
-
+      <label style={LBL}>Course (optional)<input value={form.course_name} onChange={set('course_name')} placeholder="e.g. CSC301" style={{ width: '100%', marginTop: 4 }} /></label>
+      <label style={LBL}>Notes (optional)<textarea value={form.notes} onChange={set('notes')} rows={2} style={{ width: '100%', marginTop: 4 }} /></label>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <label style={LBL}>
-          Check-in window (minutes)
-          <input type="number" min={1} max={240} value={form.check_in_window_minutes} onChange={set('check_in_window_minutes')} style={{ width: '100%', marginTop: 4 }} />
-        </label>
-        <label style={LBL}>
-          Late after (minutes)
-          <input type="number" min={0} max={240} value={form.late_after_minutes} onChange={set('late_after_minutes')} style={{ width: '100%', marginTop: 4 }} />
-        </label>
+        <label style={LBL}>Check-in window (minutes)<input type="number" min={1} max={240} value={form.check_in_window_minutes} onChange={set('check_in_window_minutes')} style={{ width: '100%', marginTop: 4 }} /></label>
+        <label style={LBL}>Late after (minutes)<input type="number" min={0} max={240} value={form.late_after_minutes} onChange={set('late_after_minutes')} style={{ width: '100%', marginTop: 4 }} /></label>
       </div>
-
       {err && <div style={{ color: 'var(--danger)', fontSize: 13 }}>{err}</div>}
-
       <button type="submit" className="btn-primary" disabled={busy} style={{ justifySelf: 'start', padding: '9px 18px' }}>
         {busy ? 'Creating…' : 'Create & open check-in'}
       </button>
@@ -869,7 +919,7 @@ function NewSessionForm({ onCreated, onCancel }) {
 
 
 // ═════════════════════════════════════════════════════════════
-// ADMIN VIEW
+// ADMIN VIEW — unchanged; admin keeps manual session fallback
 // ═════════════════════════════════════════════════════════════
 function AdminView({ canCreateSessions }) {
   const [sessions, setSessions] = useState([]);
@@ -885,8 +935,7 @@ function AdminView({ canCreateSessions }) {
   const now = useNow(1000);
 
   async function load() {
-    setLoading(true);
-    setErr('');
+    setLoading(true); setErr('');
     try {
       const [s, me] = await Promise.all([
         api.get('/attendance/sessions/'),
@@ -894,41 +943,27 @@ function AdminView({ canCreateSessions }) {
       ]);
       setSessions(s.results || []);
       setMyData(me);
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setErr(e.message); }
+    finally { setLoading(false); }
   }
 
   useEffect(() => { load(); }, []);
 
   async function checkIn(sessionId) {
-    setBusyCheckInId(sessionId);
-    setErr('');
-    setFlash('');
+    setBusyCheckInId(sessionId); setErr(''); setFlash('');
     try {
       const res = await api.post(`/attendance/sessions/${sessionId}/self-check-in/`);
-      setFlash(
-        res.status === 'late' ? 'Checked in — marked LATE.'
-        : res.needs_review ? 'Checked in — flagged for review.'
-        : 'Checked in — marked present.'
-      );
+      setFlash(res.status === 'late' ? 'Checked in — marked LATE.' : res.needs_review ? 'Checked in — flagged for review.' : 'Checked in — marked present.');
       await load();
     } catch (e) {
       if (e.status === 403 && e.data?.reason === 'outside_geofence') {
         setErr('You appear to be outside the classroom. Use the session editor below to mark yourself present manually.');
-      } else {
-        setErr(e.message);
-      }
-    } finally {
-      setBusyCheckInId(null);
-    }
+      } else { setErr(e.message); }
+    } finally { setBusyCheckInId(null); }
   }
 
   async function downloadCsv() {
-    setDownloading(true);
-    setErr('');
+    setDownloading(true); setErr('');
     try {
       const token = getToken();
       const res = await fetch(`${API_BASE}/api/attendance/export/`, {
@@ -938,17 +973,11 @@ function AdminView({ canCreateSessions }) {
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = `attendance-report-${new Date().toISOString().slice(0, 10)}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      a.href = url; a.download = `attendance-report-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setDownloading(false);
-    }
+    } catch (e) { setErr(e.message); }
+    finally { setDownloading(false); }
   }
 
   const activeCheckIns = myData?.active_check_ins || [];
@@ -956,8 +985,7 @@ function AdminView({ canCreateSessions }) {
   return (
     <div className="animate-fade-up">
       <PageHeader
-        eyebrow="Admin"
-        title="Attendance"
+        eyebrow="Admin" title="Attendance"
         subtitle="Manage class attendance. Corrections are allowed at any time."
         actions={
           <>
@@ -965,8 +993,8 @@ function AdminView({ canCreateSessions }) {
               {downloading ? '⏳ Preparing…' : '📥 Download report'}
             </button>
             {canCreateSessions && !showNewForm && (
-              <button onClick={() => setShowNewForm(true)} className="btn-primary" style={{ padding: '9px 16px' }}>
-                ＋ Create session
+              <button onClick={() => setShowNewForm(true)} style={{ padding: '9px 16px' }}>
+                ＋ One-off session
               </button>
             )}
           </>
@@ -989,9 +1017,7 @@ function AdminView({ canCreateSessions }) {
             return (
               <div key={session.id} style={{
                 padding: 20, borderRadius: 'var(--radius)',
-                background: urgent
-                  ? 'linear-gradient(135deg, #fee2e2 0%, #ffffff 100%)'
-                  : 'linear-gradient(135deg, #dcfce7 0%, #ffffff 100%)',
+                background: urgent ? 'linear-gradient(135deg, #fee2e2 0%, #ffffff 100%)' : 'linear-gradient(135deg, #dcfce7 0%, #ffffff 100%)',
                 border: `1px solid ${urgent ? '#fecaca' : '#bbf7d0'}`,
                 borderLeft: `4px solid ${urgent ? 'var(--danger)' : 'var(--success)'}`,
               }}>
@@ -1005,12 +1031,8 @@ function AdminView({ canCreateSessions }) {
                       ⏱ Closes in {formatCountdown(remaining)}
                     </div>
                   </div>
-                  <button
-                    onClick={() => checkIn(session.id)}
-                    disabled={busyCheckInId === session.id || remaining <= 0}
-                    className="btn-primary"
-                    style={{ padding: '12px 24px', fontSize: 15, fontWeight: 700 }}
-                  >
+                  <button onClick={() => checkIn(session.id)} disabled={busyCheckInId === session.id || remaining <= 0}
+                    className="btn-primary" style={{ padding: '12px 24px', fontSize: 15, fontWeight: 700 }}>
                     {busyCheckInId === session.id ? 'Checking in…' : "I'm here ✓"}
                   </button>
                 </div>
@@ -1032,22 +1054,15 @@ function AdminView({ canCreateSessions }) {
       </div>
 
       {loading && <div style={{ display: 'grid', placeItems: 'center', padding: 40 }}><span className="spinner spinner-dark" style={{ width: 26, height: 26, borderWidth: 3 }} /></div>}
-
-      {!loading && sessions.length === 0 && (
-        <EmptyState icon="📅" title="No attendance sessions yet" body="Create a session above, or add courses to the timetable." />
-      )}
-
+      {!loading && sessions.length === 0 && <EmptyState icon="📅" title="No attendance sessions yet" body="Add courses to the timetable — attendance opens automatically." />}
       {!loading && sessions.length > 0 && (
         <div className="stagger" style={{ display: 'grid', gap: 10 }}>
           {sessions.map((s) => (
-            <SessionCard
-              key={s.id}
-              session={s}
+            <SessionCard key={s.id} session={s}
               isOpen={selectedId === s.id}
               onToggle={() => setSelectedId(selectedId === s.id ? null : s.id)}
               onSaved={(m) => { setMsg(m); load(); }}
-              onError={(m) => setErr(m)}
-            />
+              onError={(m) => setErr(m)} />
           ))}
         </div>
       )}
@@ -1060,12 +1075,8 @@ function SessionCard({ session, isOpen, onToggle, onSaved, onError }) {
   const now = useNow(1000);
   const isSelfMode = session.self_check_in;
   const windowOpen = session.check_in_open;
-  const windowEnded = session.check_in_closes_at
-    ? new Date(session.check_in_closes_at).getTime() <= now
-    : false;
-  const remainingMs = session.check_in_closes_at
-    ? new Date(session.check_in_closes_at).getTime() - now
-    : 0;
+  const windowEnded = session.check_in_closes_at ? new Date(session.check_in_closes_at).getTime() <= now : false;
+  const remainingMs = session.check_in_closes_at ? new Date(session.check_in_closes_at).getTime() - now : 0;
   const needsReviewCount = session.needs_review_count || 0;
 
   return (
@@ -1080,19 +1091,13 @@ function SessionCard({ session, isOpen, onToggle, onSaved, onError }) {
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {session.title}
-            {session.cancelled && (
-              <span className="badge" style={{ fontSize: 10, background: 'var(--slate-100)', color: 'var(--slate-500)', fontWeight: 700, textDecoration: 'line-through' }}>CANCELLED</span>
-            )}
+            {session.cancelled && <span className="badge" style={{ fontSize: 10, background: 'var(--slate-100)', color: 'var(--slate-500)', fontWeight: 700, textDecoration: 'line-through' }}>CANCELLED</span>}
             {isSelfMode && !session.cancelled && (
               <span className="badge" style={{ fontSize: 10, background: windowOpen ? 'var(--success)' : 'var(--slate-100)', color: windowOpen ? '#fff' : 'var(--slate-600)', fontWeight: 700 }}>
                 {windowOpen ? '● LIVE' : windowEnded ? '🔒 CLOSED' : 'self check-in'}
               </span>
             )}
-            {needsReviewCount > 0 && (
-              <span className="badge badge-warning" style={{ fontSize: 10 }}>
-                ⚠ {needsReviewCount} to review
-              </span>
-            )}
+            {needsReviewCount > 0 && <span className="badge badge-warning" style={{ fontSize: 10 }}>⚠ {needsReviewCount} to review</span>}
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
             {new Date(session.date).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
@@ -1101,18 +1106,10 @@ function SessionCard({ session, isOpen, onToggle, onSaved, onError }) {
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center', flexWrap: 'wrap' }}>
           {isSelfMode && session.record_count > 0 && (
-            <span className="badge badge-neutral" style={{ fontSize: 11 }}>
-              {session.self_check_in_count}/{session.record_count} self-checked
-            </span>
+            <span className="badge badge-neutral" style={{ fontSize: 11 }}>{session.self_check_in_count}/{session.record_count} self-checked</span>
           )}
-          <span className="badge badge-success" style={{ fontSize: 11 }}>
-            {session.present_count}/{session.record_count} present
-          </span>
-          {session.absent_count > 0 && (
-            <span className="badge badge-danger" style={{ fontSize: 11 }}>
-              {session.absent_count} absent
-            </span>
-          )}
+          <span className="badge badge-success" style={{ fontSize: 11 }}>{session.present_count}/{session.record_count} present</span>
+          {session.absent_count > 0 && <span className="badge badge-danger" style={{ fontSize: 11 }}>{session.absent_count} absent</span>}
           <span style={{ color: 'var(--slate-400)', fontSize: 12 }}>{isOpen ? '▲' : '▼'}</span>
         </div>
       </button>
@@ -1122,13 +1119,9 @@ function SessionCard({ session, isOpen, onToggle, onSaved, onError }) {
           {isSelfMode && !session.cancelled && (
             <div style={{ padding: '12px 20px', background: windowOpen ? '#f0fdf4' : windowEnded ? '#fef3c7' : 'var(--slate-50)', borderTop: '1px solid var(--border)' }}>
               {windowOpen ? (
-                <div style={{ fontSize: 13, color: 'var(--success)', fontWeight: 600 }}>
-                  ● Check-in open · Closes in {formatCountdown(remainingMs)}
-                </div>
+                <div style={{ fontSize: 13, color: 'var(--success)', fontWeight: 600 }}>● Check-in open · Closes in {formatCountdown(remainingMs)}</div>
               ) : windowEnded ? (
-                <div style={{ fontSize: 13, color: 'var(--warning)', fontWeight: 600 }}>
-                  🔒 Check-in closed · Admin can still correct records
-                </div>
+                <div style={{ fontSize: 13, color: 'var(--warning)', fontWeight: 600 }}>🔒 Check-in closed · Admin can still correct records</div>
               ) : (
                 <div style={{ fontSize: 13, color: 'var(--slate-600)' }}>Check-in window not yet opened.</div>
               )}
@@ -1174,11 +1167,8 @@ function SessionEditor({ sessionId, onSaved, onError }) {
       });
       setDirty(false);
       onSaved('Attendance saved.');
-    } catch (e) {
-      onError(e.message);
-    } finally {
-      setSaving(false);
-    }
+    } catch (e) { onError(e.message); }
+    finally { setSaving(false); }
   }
 
   async function reviewRecord(recordId, decision) {
@@ -1187,11 +1177,8 @@ function SessionEditor({ sessionId, onSaved, onError }) {
       const updated = await api.post(`/attendance/records/${recordId}/review/`, { decision });
       setRecords((prev) => prev.map((r) => (r.id === recordId ? { ...r, ...updated } : r)));
       onSaved(decision === 'approve' ? 'Check-in approved.' : 'Check-in rejected — marked absent.');
-    } catch (e) {
-      onError(e.message);
-    } finally {
-      setReviewingId(null);
-    }
+    } catch (e) { onError(e.message); }
+    finally { setReviewingId(null); }
   }
 
   if (loading) {
@@ -1218,8 +1205,7 @@ function SessionEditor({ sessionId, onSaved, onError }) {
           return (
             <div key={r.user_id} style={{
               display: 'flex', flexDirection: 'column', gap: 8,
-              padding: '10px 12px',
-              background: 'var(--slate-50)',
+              padding: '10px 12px', background: 'var(--slate-50)',
               borderRadius: 'var(--radius-sm)',
               borderLeft: isFlagged ? '3px solid var(--warning)' : '3px solid transparent',
             }}>
@@ -1229,16 +1215,10 @@ function SessionEditor({ sessionId, onSaved, onError }) {
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontWeight: 600, fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       {r.user_name}
-                      {isFlagged && (
-                        <span className="badge badge-warning" style={{ fontSize: 9 }}>
-                          ⚠ {(r.check_in_flags || []).join(', ')}
-                        </span>
-                      )}
+                      {isFlagged && <span className="badge badge-warning" style={{ fontSize: 9 }}>⚠ {(r.check_in_flags || []).join(', ')}</span>}
                     </div>
                     {r.reference_number && (
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                        {r.reference_number}
-                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{r.reference_number}</div>
                     )}
                     {isSelf && r.marked_at && (
                       <div style={{ fontSize: 10, color: 'var(--success)', fontWeight: 600, marginTop: 2 }}>
@@ -1253,15 +1233,12 @@ function SessionEditor({ sessionId, onSaved, onError }) {
                     return (
                       <button key={key} onClick={() => setStatus(r.user_id, key)} style={{
                         padding: '5px 10px', fontSize: 11, fontWeight: 600,
-                        borderRadius: 'var(--radius-pill)',
-                        border: '1px solid',
+                        borderRadius: 'var(--radius-pill)', border: '1px solid',
                         borderColor: active ? m.color : 'var(--border)',
                         background: active ? m.bg : '#fff',
                         color: active ? m.color : 'var(--slate-500)',
                         cursor: 'pointer',
-                      }}>
-                        {m.label}
-                      </button>
+                      }}>{m.label}</button>
                     );
                   })}
                 </div>
@@ -1270,18 +1247,15 @@ function SessionEditor({ sessionId, onSaved, onError }) {
               {isFlagged && (
                 <div style={{
                   display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center',
-                  padding: '6px 10px',
-                  background: 'var(--warning-bg)',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: 11,
+                  padding: '6px 10px', background: 'var(--warning-bg)',
+                  borderRadius: 'var(--radius-sm)', fontSize: 11,
                 }}>
-                  <span style={{ color: 'var(--warning)', fontWeight: 600 }}>
-                    Review needed
-                  </span>
+                  <span style={{ color: 'var(--warning)', fontWeight: 600 }}>Review needed</span>
+                  {r.face_distance != null && (
+                    <span style={{ color: 'var(--slate-600)' }}>· 🧑 Face {r.face_distance} {r.face_verified ? '✓' : '✕'}</span>
+                  )}
                   {r.check_in_gps_accuracy && (
-                    <span style={{ color: 'var(--slate-600)' }}>
-                      · 🎯 ±{Math.round(r.check_in_gps_accuracy)}m
-                    </span>
+                    <span style={{ color: 'var(--slate-600)' }}>· 🎯 ±{Math.round(r.check_in_gps_accuracy)}m</span>
                   )}
                   {r.check_in_gps_lat && (
                     <span style={{ color: 'var(--slate-600)', fontFamily: 'var(--font-mono)' }}>
@@ -1289,18 +1263,12 @@ function SessionEditor({ sessionId, onSaved, onError }) {
                     </span>
                   )}
                   <div style={{ display: 'flex', gap: 4, marginLeft: 'auto' }}>
-                    <button
-                      onClick={() => reviewRecord(r.id, 'approve')}
-                      disabled={reviewingId === r.id}
-                      style={{ padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 'var(--radius-pill)', background: 'var(--success)', color: '#fff', border: 'none', cursor: reviewingId === r.id ? 'not-allowed' : 'pointer', opacity: reviewingId === r.id ? 0.6 : 1 }}
-                    >
+                    <button onClick={() => reviewRecord(r.id, 'approve')} disabled={reviewingId === r.id}
+                      style={{ padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 'var(--radius-pill)', background: 'var(--success)', color: '#fff', border: 'none', cursor: reviewingId === r.id ? 'not-allowed' : 'pointer', opacity: reviewingId === r.id ? 0.6 : 1 }}>
                       {reviewingId === r.id ? '…' : '✓ Approve'}
                     </button>
-                    <button
-                      onClick={() => reviewRecord(r.id, 'reject')}
-                      disabled={reviewingId === r.id}
-                      style={{ padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 'var(--radius-pill)', background: 'var(--danger)', color: '#fff', border: 'none', cursor: reviewingId === r.id ? 'not-allowed' : 'pointer', opacity: reviewingId === r.id ? 0.6 : 1 }}
-                    >
+                    <button onClick={() => reviewRecord(r.id, 'reject')} disabled={reviewingId === r.id}
+                      style={{ padding: '4px 10px', fontSize: 11, fontWeight: 600, borderRadius: 'var(--radius-pill)', background: 'var(--danger)', color: '#fff', border: 'none', cursor: reviewingId === r.id ? 'not-allowed' : 'pointer', opacity: reviewingId === r.id ? 0.6 : 1 }}>
                       ✕ Reject
                     </button>
                   </div>
@@ -1312,11 +1280,7 @@ function SessionEditor({ sessionId, onSaved, onError }) {
       </div>
 
       <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'flex-end' }}>
-        {dirty && (
-          <span style={{ fontSize: 12, color: 'var(--warning)', fontWeight: 500 }}>
-            Unsaved changes
-          </span>
-        )}
+        {dirty && <span style={{ fontSize: 12, color: 'var(--warning)', fontWeight: 500 }}>Unsaved changes</span>}
         <button onClick={save} disabled={!dirty || saving} className="btn-primary" style={{ padding: '9px 18px' }}>
           {saving ? 'Saving…' : 'Save attendance'}
         </button>
@@ -1328,17 +1292,8 @@ function SessionEditor({ sessionId, onSaved, onError }) {
 
 function RecordAvatar({ src, initials }) {
   return (
-    <div style={{
-      width: 36, height: 36, borderRadius: '50%',
-      background: src ? 'var(--slate-200)' : 'var(--brand)',
-      color: '#fff',
-      display: 'grid', placeItems: 'center',
-      fontSize: 12, fontWeight: 700, textTransform: 'uppercase',
-      overflow: 'hidden', flexShrink: 0,
-    }}>
-      {src ? (
-        <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-      ) : initials}
+    <div style={{ width: 36, height: 36, borderRadius: '50%', background: src ? 'var(--slate-200)' : 'var(--brand)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', overflow: 'hidden', flexShrink: 0 }}>
+      {src ? <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : initials}
     </div>
   );
 } 

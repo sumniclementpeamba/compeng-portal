@@ -13,6 +13,7 @@ from rest_framework.views import APIView
 from accounts.models import User
 from accounts.permissions import CanReview, IsAdminRole, IsClassRep, role_of
 from audit.models import log
+from .face import verify as verify_face
 from .geo import evaluate_geofence, get_client_ip, is_campus_ip
 from .models import (
     AttendanceRecord, AttendanceSession, DeviceRecord, TimetableEntry,
@@ -37,23 +38,12 @@ from .semester import (
 # Helpers
 # ─────────────────────────────────────────────────────────────
 def _is_frozen(session):
-    """True once the check-in window has already closed.
-
-    Used only to prevent reopening a closed session. Attendance marking
-    is admin-only regardless of freeze state.
-    """
     if not session.check_in_closes_at:
         return False
     return timezone.now() >= session.check_in_closes_at
 
 
 def _eligible_users():
-    """Every user with a ClassMembership row.
-
-    Students and reps get attendance records. Admins with a membership
-    also get records (so they can self check-in). Admin-only accounts
-    created via createsuperuser without a membership are excluded.
-    """
     return User.objects.filter(membership__isnull=False)
 
 
@@ -71,11 +61,6 @@ def _compute_late_threshold(session):
 # Auto-session generation from timetable
 # ─────────────────────────────────────────────────────────────
 def ensure_todays_sessions_for_user(user):
-    """Lazily create any timetable sessions whose check-in window is
-    currently open, and ensure the requesting user has a record.
-
-    Called on every attendance page load. Idempotent.
-    """
     now = timezone.now()
     today = now.date()
     day_of_week = today.weekday()
@@ -145,7 +130,7 @@ def ensure_todays_sessions_for_user(user):
 
 
 # ─────────────────────────────────────────────────────────────
-# Timetable CRUD — reps create/edit, admins read-only
+# Timetable CRUD
 # ─────────────────────────────────────────────────────────────
 class TimetableEntryListCreateView(generics.ListCreateAPIView):
     serializer_class = TimetableEntrySerializer
@@ -197,7 +182,6 @@ class TimetableEntryDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 # ─────────────────────────────────────────────────────────────
 # Sessions — list/create
-# Reps create sessions; admins cannot create (read-only workflow)
 # ─────────────────────────────────────────────────────────────
 class AttendanceSessionListCreateView(generics.ListCreateAPIView):
     serializer_class = AttendanceSessionSerializer
@@ -223,9 +207,6 @@ class AttendanceSessionListCreateView(generics.ListCreateAPIView):
 
         session = serializer.save(created_by=request.user)
 
-        # Snapshot classroom coordinates from the timetable entry.
-        # Manual sessions (no timetable_entry) keep the default nulls —
-        # they'll have no geofence, so check-ins succeed without location.
         if session.timetable_entry:
             session.classroom_lat = session.timetable_entry.latitude
             session.classroom_lng = session.timetable_entry.longitude
@@ -238,9 +219,6 @@ class AttendanceSessionListCreateView(generics.ListCreateAPIView):
                 "geofence_radius_meters", "require_location",
             ])
 
-        # Auto-open check-in for manual sessions. Reps can't mark
-        # attendance themselves, so the session must be immediately
-        # usable by students (including the rep) for self check-in.
         if session.self_check_in and not session.timetable_entry:
             now = timezone.now()
             session.check_in_opens_at = now
@@ -290,11 +268,6 @@ class AttendanceSessionListCreateView(generics.ListCreateAPIView):
 
 
 class AttendanceSessionDetailView(generics.RetrieveUpdateDestroyAPIView):
-    """Readable + editable by rep and admin. Marking records is
-    admin-only via AttendanceMarkView; metadata changes and
-    cancellations don't affect records directly.
-    """
-
     serializer_class = AttendanceSessionDetailSerializer
     permission_classes = [CanReview]
 
@@ -307,7 +280,7 @@ class AttendanceSessionDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Cancel session — rep only
+# Cancel / open / close
 # ─────────────────────────────────────────────────────────────
 class AttendanceCancelSessionView(APIView):
     permission_classes = [IsClassRep]
@@ -327,15 +300,11 @@ class AttendanceCancelSessionView(APIView):
         return Response(AttendanceSessionDetailSerializer(session).data)
 
 
-# ─────────────────────────────────────────────────────────────
-# Open / close check-in — rep only
-# ─────────────────────────────────────────────────────────────
 class AttendanceOpenCheckInView(APIView):
     permission_classes = [IsClassRep]
 
     def post(self, request, pk):
         session = get_object_or_404(AttendanceSession, pk=pk)
-
         if session.timetable_entry:
             return Response(
                 {"detail": "Timetable sessions open automatically."},
@@ -396,26 +365,22 @@ class AttendanceCloseCheckInView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Self check-in — students AND reps (anyone with a record)
-# Now with GPS + device fingerprint verification
+# Self check-in — GPS + device fingerprint + FACE VERIFICATION
 # ─────────────────────────────────────────────────────────────
 class AttendanceSelfCheckInView(APIView):
-    """Student self check-in with GPS + device fingerprint verification.
+    """Student self check-in with GPS + device fingerprint + face match.
 
-    Accepts JSON:
-      {
-        "gps": {"lat": 5.6505, "lng": -0.187, "accuracy": 35},
-        "fingerprint": "a3f9c2d1b7e4e5f6"
-      }
+    Accepts JSON or multipart. With multipart, `gps` is a JSON string.
 
-    Both fields optional, but omitting them produces flags:
-      - no gps         → flag "no_gps"
-      - no fingerprint → allows (duplicate-device check skipped)
+    Fields (all optional but affect flags):
+      - gps: {lat, lng, accuracy} or JSON string
+      - fingerprint: device hash
+      - photo: JPEG/PNG for face verification
 
     Responses:
-      200 {ok: true, status: "present"|"late", flags: [...]}
-      403 {detail: "...", reason: "outside_geofence"|"duplicate_device"}
-      400 {detail: "..."} for bad state (window closed, already marked, etc.)
+      200 {ok, status, flags, needs_review, face_verified, face_distance, record}
+      400 {detail, reason?}  bad state or no_face
+      403 {detail, reason}   outside_geofence | duplicate_device | face_mismatch
     """
 
     def post(self, request, pk):
@@ -450,8 +415,17 @@ class AttendanceSelfCheckInView(APIView):
                 status=400,
             )
 
-        # ── Parse GPS payload ──────────────────────────────
-        gps = request.data.get("gps") or {}
+        # ── Parse GPS (handles JSON dict or multipart string) ──
+        import json as _json
+        gps_raw = request.data.get("gps")
+        if isinstance(gps_raw, str):
+            try:
+                gps = _json.loads(gps_raw) if gps_raw else {}
+            except _json.JSONDecodeError:
+                return Response({"detail": "Invalid GPS data."}, status=400)
+        else:
+            gps = gps_raw or {}
+
         try:
             student_lat = (
                 float(gps["lat"]) if gps.get("lat") is not None else None
@@ -468,8 +442,9 @@ class AttendanceSelfCheckInView(APIView):
             return Response({"detail": "Invalid GPS data."}, status=400)
 
         fingerprint = (request.data.get("fingerprint") or "").strip()[:64]
+        photo_file = request.FILES.get("photo")
 
-        # ── Device fingerprint duplicate check (fail fast) ──
+        # ── Device fingerprint duplicate check ──────────────
         if fingerprint:
             conflict = (
                 session.device_records
@@ -519,14 +494,66 @@ class AttendanceSelfCheckInView(APIView):
                 flags.append("uncertain_geofence")
             elif geofence_result == "no_gps":
                 flags.append("no_gps")
-            # 'inside' and 'no_geofence' → no flag
 
-        # ── IP consistency (soft flag only) ────────────────
+        # ── Face verification ──────────────────────────────
+        face_flags = []
+        face_distance = None
+        face_verified = False
+
+        enrolled_embedding = getattr(request.user, "face_embedding", None)
+
+        if not enrolled_embedding:
+            face_flags.append("face_not_enrolled")
+        elif not photo_file:
+            face_flags.append("face_missing")
+        else:
+            try:
+                img_bytes = photo_file.read()
+            except Exception:
+                img_bytes = b""
+
+            result = verify_face(enrolled_embedding, img_bytes)
+            face_distance = result["distance"]
+
+            if result["error"] == "no_face":
+                return Response(
+                    {
+                        "detail": "No face detected in the photo. "
+                                  "Try again with better lighting and "
+                                  "your face centred.",
+                        "reason": "no_face",
+                    },
+                    status=400,
+                )
+            if not result["ok"]:
+                face_flags.append("face_error")
+            elif result["match"]:
+                face_verified = True
+            elif result["needs_review"]:
+                face_verified = True
+                face_flags.append("face_borderline")
+            else:
+                return Response(
+                    {
+                        "detail": "That doesn't match the photo on your "
+                                  "profile. If you've changed appearance "
+                                  "(haircut, glasses), re-enroll your face "
+                                  "in Profile. If this is wrong, message "
+                                  "your course rep.",
+                        "reason": "face_mismatch",
+                        "distance": face_distance,
+                    },
+                    status=403,
+                )
+
+        # ── IP consistency (soft flag) ─────────────────────
         campus_networks = getattr(settings, "CAMPUS_NETWORKS", [])
         client_ip = get_client_ip(request)
         if campus_networks and client_ip:
             if not is_campus_ip(client_ip, campus_networks):
                 flags.append("off_campus_network")
+
+        all_flags = flags + face_flags
 
         # ── Get the attendance record ──────────────────────
         record, _ = AttendanceRecord.objects.get_or_create(
@@ -551,7 +578,7 @@ class AttendanceSelfCheckInView(APIView):
                 status=400,
             )
 
-        # ── Register device fingerprint (DB-enforced uniqueness) ──
+        # ── Register device fingerprint ────────────────────
         if fingerprint:
             try:
                 DeviceRecord.objects.create(
@@ -569,7 +596,7 @@ class AttendanceSelfCheckInView(APIView):
                     status=403,
                 )
 
-        # ── Determine present vs late ──────────────────────
+        # ── Present vs late ────────────────────────────────
         late_threshold = _compute_late_threshold(session)
         new_status = (
             AttendanceRecord.STATUS_LATE
@@ -585,25 +612,38 @@ class AttendanceSelfCheckInView(APIView):
         record.check_in_gps_lng = student_lng
         record.check_in_gps_accuracy = student_accuracy
         record.check_in_ip = client_ip
-        record.check_in_flags = flags
-        record.needs_review = bool(flags)
+        record.check_in_flags = all_flags
+        record.needs_review = bool(all_flags)
+        record.face_verified = face_verified
+        record.face_distance = face_distance
+        record.face_flags = face_flags
+        if photo_file:
+            try:
+                photo_file.seek(0)
+                record.face_capture = photo_file
+            except Exception:
+                pass
         record.save(update_fields=[
             "status", "check_in_method", "marked_by", "marked_at",
             "check_in_gps_lat", "check_in_gps_lng", "check_in_gps_accuracy",
             "check_in_ip", "check_in_flags", "needs_review",
+            "face_verified", "face_distance", "face_flags", "face_capture",
         ])
 
         log(
             request.user, "attendance.self_check_in", session,
             title=session.title, status=new_status,
-            flags=flags, distance=distance,
+            flags=all_flags, distance=distance,
+            face_verified=face_verified, face_distance=face_distance,
         )
 
         return Response({
             "ok": True,
             "status": new_status,
-            "flags": flags,
-            "needs_review": bool(flags),
+            "flags": all_flags,
+            "needs_review": bool(all_flags),
+            "face_verified": face_verified,
+            "face_distance": face_distance,
             "record": AttendanceRecordSerializer(record).data,
         })
 
@@ -626,14 +666,13 @@ class AttendanceSessionStudentView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Bulk mark — admin only, at any time
+# Bulk mark — admin only
 # ─────────────────────────────────────────────────────────────
 class AttendanceMarkView(APIView):
     permission_classes = [IsAdminRole]
 
     def post(self, request, pk):
         session = get_object_or_404(AttendanceSession, pk=pk)
-
         records_data = request.data.get("records", [])
         if not isinstance(records_data, list):
             return Response({"detail": "records must be a list."}, status=400)
@@ -965,7 +1004,7 @@ def _empty_semester_row(student, expected_total, expected_to_date):
 
 
 # ─────────────────────────────────────────────────────────────
-# CSV export — all-time + semester (admin only)
+# CSV export
 # ─────────────────────────────────────────────────────────────
 class AttendanceExportView(APIView):
     permission_classes = [IsAdminRole]
@@ -990,10 +1029,9 @@ class AttendanceExportView(APIView):
         response["Content-Disposition"] = (
             f'attachment; filename="attendance-{sem_slug}-{today}.csv"'
         )
-        response.write("\ufeff")  # UTF-8 BOM for Excel
+        response.write("\ufeff")
 
         writer = csv.writer(response)
-
         writer.writerow([
             "Reference Number", "Full Name", "Phone", "Level",
             "Sessions (All)", "Present (All)", "Late (All)",
@@ -1074,23 +1112,13 @@ class AttendanceExportView(APIView):
             semester=(config.get("name") if config else None),
         )
 
-        return response 
-    
+        return response
+
+
 # ─────────────────────────────────────────────────────────────
 # Review a flagged check-in — rep or admin
 # ─────────────────────────────────────────────────────────────
 class AttendanceRecordReviewView(APIView):
-    """Approve or reject a flagged self check-in.
-
-    Approve: clears needs_review, keeps current status (present/late).
-    Reject:  clears needs_review, marks the student absent.
-
-    Reps and admins can review. Reps CANNOT use this to mark students
-    present who weren't flagged — the endpoint refuses to touch clean
-    records. That keeps the guard rail: reps only handle the review
-    queue, admins keep full marking control.
-    """
-
     permission_classes = [CanReview]
 
     def post(self, request, pk):
@@ -1133,4 +1161,70 @@ class AttendanceRecordReviewView(APIView):
             flags=record.check_in_flags,
         )
 
-        return Response(AttendanceRecordSerializer(record).data)    
+        return Response(AttendanceRecordSerializer(record).data) 
+
+
+class UpcomingSessionsView(APIView):
+    """
+    Next N classes from the timetable, with computed check-in windows.
+    Does NOT create AttendanceSession rows — informational only.
+    """
+    def get(self, request):
+        from datetime import datetime as _dt, timedelta as _td
+        from django.utils import timezone as _tz
+
+        now = _tz.now()
+        tz = _tz.get_current_timezone()
+        try:
+            lookahead_days = min(int(request.query_params.get('days', 7)), 30)
+            limit = min(int(request.query_params.get('limit', 5)), 20)
+        except (TypeError, ValueError):
+            lookahead_days, limit = 7, 5
+
+        results = []
+        for day_offset in range(lookahead_days + 1):
+            if len(results) >= limit:
+                break
+            check_date = (now + _td(days=day_offset)).date()
+            day_of_week = check_date.weekday()
+
+            entries = TimetableEntry.objects.filter(
+                active=True, day_of_week=day_of_week
+            ).order_by('start_time')
+
+            for entry in entries:
+                if len(results) >= limit:
+                    break
+
+                class_start = _tz.make_aware(
+                    _dt.combine(check_date, entry.start_time), tz
+                )
+                class_end = _tz.make_aware(
+                    _dt.combine(check_date, entry.end_time), tz
+                )
+                opens_at = class_start - _td(
+                    minutes=entry.check_in_starts_minutes_before
+                )
+                closes_at = class_end + _td(
+                    minutes=entry.check_in_ends_minutes_after
+                )
+
+                if closes_at < now:
+                    continue  # already past
+
+                results.append({
+                    'timetable_entry_id': entry.id,
+                    'course_code': entry.course_code,
+                    'course_title': entry.course_title,
+                    'date': str(check_date),
+                    'start_time': entry.start_time.strftime('%H:%M'),
+                    'end_time': entry.end_time.strftime('%H:%M'),
+                    'room': getattr(entry, 'room', None),
+                    'check_in_opens_at': opens_at.isoformat(),
+                    'check_in_closes_at': closes_at.isoformat(),
+                    'opens_in_seconds': max(0, int((opens_at - now).total_seconds())),
+                    'closes_in_seconds': max(0, int((closes_at - now).total_seconds())),
+                    'is_open_now': opens_at <= now < closes_at,
+                })
+
+        return Response({'results': results})        

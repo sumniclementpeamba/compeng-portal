@@ -34,7 +34,13 @@ from .serializers import (
     RegisterSerializer,
     UserSerializer,
 )
+ 
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
+from attendance.face import extract_embedding
 
 # ─────────────────────────────────────────────────────────────
 # Helpers
@@ -665,3 +671,76 @@ class MemberSummaryView(APIView):
             "missing_phone": missing_phone,
             "missing_index": missing_index,
         })    
+    
+ 
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def face_status(request):
+    u = request.user
+    return Response({
+        'enrolled': bool(u.face_embedding),
+        'enrolled_at': u.face_enrolled_at,
+        'consent': u.face_consent_given,
+        'consent_at': u.face_consent_at,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def face_enroll(request):
+    if request.data.get('consent') not in ('true', 'True', True):
+        return Response(
+            {'detail': 'Consent is required to enroll face verification.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    photo = request.FILES.get('photo')
+    if not photo:
+        return Response({'detail': 'No photo provided.'}, status=400)
+    if photo.size > 5 * 1024 * 1024:
+        return Response({'detail': 'Photo too large (max 5 MB).'}, status=400)
+
+    img_bytes = photo.read()
+    embedding, err = extract_embedding(img_bytes)
+    if err:
+        code = 'No face detected — try better lighting and centre your face.' \
+            if err == 'no_face' else f'Could not process image ({err}).'
+        return Response({'detail': code}, status=400)
+
+    u = request.user
+    u.face_embedding = embedding
+    u.face_enrolled_at = timezone.now()
+    u.face_consent_given = True
+    u.face_consent_at = timezone.now()
+    if u.face_enrollment_photo:
+        u.face_enrollment_photo.delete(save=False)
+    u.face_enrollment_photo = photo
+    u.save(update_fields=[
+        'face_embedding', 'face_enrolled_at', 'face_consent_given',
+        'face_consent_at', 'face_enrollment_photo',
+    ])
+    return Response({'ok': True, 'enrolled_at': u.face_enrolled_at})
+
+
+# ─────────────────────────────────────────────────────────────
+# Face delete — accepts DELETE and POST
+#
+# POST is provided so the frontend's shared api client (which
+# exposes get/post/patch but not delete) can invoke it without
+# touching the shared client used by every other page.
+# ─────────────────────────────────────────────────────────────
+@api_view(['DELETE', 'POST'])
+@permission_classes([IsAuthenticated])
+def face_delete(request):
+    u = request.user
+    if u.face_enrollment_photo:
+        u.face_enrollment_photo.delete(save=False)
+    u.face_embedding = None
+    u.face_enrolled_at = None
+    u.face_consent_given = False
+    u.face_consent_at = None
+    u.face_enrollment_photo = None
+    u.save(update_fields=[
+        'face_embedding', 'face_enrolled_at', 'face_consent_given',
+        'face_consent_at', 'face_enrollment_photo',
+    ])
+    return Response(status=204) 

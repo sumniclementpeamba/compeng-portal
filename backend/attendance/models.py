@@ -206,6 +206,12 @@ class AttendanceRecord(models.Model):
     #   "off_campus_network" — IP not in CAMPUS_NETWORKS (soft flag only)
     check_in_flags = models.JSONField(default=list, blank=True)
 
+        # --- Face verification ---
+    face_verified = models.BooleanField(default=False)
+    face_distance = models.FloatField(null=True, blank=True)
+    face_capture = models.ImageField(upload_to='face/checkin/', null=True, blank=True)
+    face_flags = models.JSONField(default=list, blank=True)   # ['face_borderline', 'face_not_enrolled', ...]
+
     # True if the record has any flags — this is what drives the
     # "needs review" red badge in the rep's session editor.
     needs_review = models.BooleanField(default=False)

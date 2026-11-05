@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { api, apiUrl, getToken } from '../api/client';
 import { PageHeader, InfoCard } from '../components/PageUI';
+import FaceEnrollment from '../components/FaceEnrollment';
 
 const LABEL = { fontSize: 13, fontWeight: 500, color: 'var(--slate-700)', display: 'block' };
 const FIELD = { width: '100%', marginTop: 4 };
@@ -286,7 +287,7 @@ export default function Profile() {
             </div>
           </div>
 
-          {/* Credentials card — read-only at-a-glance */}
+          {/* Credentials card */}
           <div className="card" style={{
             padding: 24,
             borderLeft: '3px solid var(--brand)',
@@ -354,7 +355,10 @@ export default function Profile() {
             </div>
           </div>
 
-          {/* Personal details — view or edit */}
+          {/* Face verification */}
+          <FaceEnrollment />
+
+          {/* Personal details */}
           {editing ? (
             <form
               id="profile-form"

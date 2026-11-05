@@ -16,6 +16,7 @@ from .views import (
     SemesterAttendanceSummaryView,
     TimetableEntryDetailView,
     TimetableEntryListCreateView,
+    UpcomingSessionsView,
 )
 
 urlpatterns = [
@@ -39,6 +40,7 @@ urlpatterns = [
 
     # Admin semester view + export
     path("semester/summary/", SemesterAttendanceSummaryView.as_view()),
+    path('upcoming/', UpcomingSessionsView.as_view(), name='attendance-upcoming'),
     path("export/", AttendanceExportView.as_view()),
         path("records/<int:pk>/review/", AttendanceRecordReviewView.as_view()),
 ] 

@@ -226,7 +226,7 @@ export default function Login() {
         paddingBottom: 8,
       }}>
         <div style={{ fontWeight: 500 }}>
-          © {COPYRIGHT_YEAR} — Created by{' '}
+          © {COPYRIGHT_YEAR} — Developed by{' '}
           <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>
             {CREATOR_NAME}
           </span>

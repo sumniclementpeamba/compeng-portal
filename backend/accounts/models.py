@@ -17,6 +17,17 @@ class User(AbstractUser):
     phone_number = models.CharField(max_length=30, blank=True)
     index_number = models.CharField(max_length=30, blank=True) 
     avatar = models.ImageField(upload_to="avatars/", null=True, blank=True)
+    
+    # --- Face verification ---
+    face_embedding = models.JSONField(null=True, blank=True)          # 512-float list
+    face_enrolled_at = models.DateTimeField(null=True, blank=True)
+    face_consent_given = models.BooleanField(default=False)
+    face_consent_at = models.DateTimeField(null=True, blank=True)
+    face_enrollment_photo = models.ImageField(
+        upload_to='face/enroll/', null=True, blank=True,
+    )  # access-controlled — for rep/admin review only
+
+    
 
     # Reference number from the admission letter / class list.
     # Example: UA2600133 (9 chars). Unique so no two students share one.

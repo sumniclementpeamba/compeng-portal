@@ -62,6 +62,9 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
             # GPS + verification data
             "check_in_gps_lat", "check_in_gps_lng", "check_in_gps_accuracy",
             "check_in_ip", "check_in_flags", "needs_review",
+            "face_verified",
+            "face_distance",
+            "face_flags",
         )
         read_only_fields = (
             "id", "user_id", "user_name", "reference_number",
