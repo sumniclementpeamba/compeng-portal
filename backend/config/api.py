@@ -66,4 +66,6 @@ urlpatterns = [
     path("members/<int:user_id>/role/", MemberRoleUpdateView.as_view(), name="member-role"),
 
     path("attendance/", include("attendance.urls")),
+    # Face enrollment — system-wide toggle (admin)
+    path("face-enrollment/setting/", FaceEnrollmentSettingView.as_view(), name="face-enrollment-setting"),
 ] 
