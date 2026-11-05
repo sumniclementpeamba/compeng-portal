@@ -1,23 +1,29 @@
-"""Face verification using InsightFace (ArcFace / buffalo_l).
+"""Face verification using InsightFace (ArcFace / buffalo_sc).
 
-Interface is unchanged from the DeepFace version — views.py needs no edits.
+Interface is unchanged from the previous version — views.py needs no edits.
 
     from .face import verify, extract_embedding, is_available, cosine_distance
 
-Embeddings are 512-d L2-normalised vectors from InsightFace's buffalo_l pack
-(SCRFD detector + ArcFace ResNet-50 recogniser).
+buffalo_sc uses MobileFaceNet (16 MB pack, ~250 MB peak RAM) instead of
+buffalo_l's ResNet50 (326 MB pack, ~1 GB peak RAM). The trade-off:
 
-Thresholds (cosine distance, buffalo_l):
-    < 0.40  → confident match
-    0.40-0.55 → borderline; flag for rep review
-    > 0.55  → mismatch
+    buffalo_l   LFW 99.86%  →  will not fit on Render free tier
+    buffalo_sc  LFW 99.5%   →  fits comfortably, works everywhere
+
+Embeddings are still 512-d L2-normalised cosine-distance vectors. The
+thresholds shift up slightly because MobileFaceNet's distance distribution
+sits a touch higher than ResNet50's.
+
+Thresholds (cosine distance, buffalo_sc):
+    < 0.45       → confident match
+    0.45 – 0.60  → borderline; flag for rep review
+    > 0.60       → mismatch
 """
 
 import os
 import tempfile
 import threading
 from typing import Optional, Tuple
- 
 
 # ── Lazy imports — captured so a broken install doesn't kill Django ──
 _np = None
@@ -44,14 +50,12 @@ except Exception as e:
 
 
 # ── Configuration ─────────────────────────────────────────────
-MODEL_PACK = 'buffalo_l'
+MODEL_PACK = 'buffalo_sc'        # was 'buffalo_l'
 PROVIDERS = ['CPUExecutionProvider']
-# Set INSIGHTFACE_HOME env var in production if you want the model cache
-# on a persistent volume (Render/Railway ephemeral fs wipes ~/.insightface).
 MODEL_ROOT = os.environ.get('INSIGHTFACE_HOME', os.path.expanduser('~/.insightface'))
 
-MATCH_THRESHOLD = 0.40
-REVIEW_THRESHOLD = 0.55
+MATCH_THRESHOLD = 0.45           # was 0.40
+REVIEW_THRESHOLD = 0.60          # was 0.55
 
 
 # ── Model lazy loader (thread-safe; downloads weights on first use) ──
