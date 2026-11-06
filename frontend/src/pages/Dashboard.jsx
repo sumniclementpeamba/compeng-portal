@@ -462,6 +462,25 @@ function FaceEnrollmentToggle() {
               ? 'Students can enrol their face from their Profile page. Close this when you want to stop new enrollments.'
               : 'Students cannot enrol their faces right now. Open this when you are ready for the class to enrol.'}
           </p>
+
+          {/* ── Enrollment counts (NEW) ─────────────────── */}
+          {setting.total_members !== undefined && (
+            <div style={{
+              display: 'flex', gap: 14, flexWrap: 'wrap',
+              marginTop: 10, fontSize: 12, color: 'var(--slate-700)',
+            }}>
+              <span>
+                <strong style={{ color: 'var(--success)' }}>{setting.enrolled_count}</strong>
+                {' '}of <strong>{setting.total_members}</strong> enrolled
+              </span>
+              {setting.eligible_not_enrolled > 0 && (
+                <span style={{ color: 'var(--slate-500)' }}>
+                  · <strong>{setting.eligible_not_enrolled}</strong> ready to enrol
+                </span>
+              )}
+            </div>
+          )}
+
           {setting.updated_at && setting.updated_by_name && (
             <p style={{
               fontSize: 11, color: 'var(--text-muted)',

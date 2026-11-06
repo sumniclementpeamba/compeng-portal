@@ -493,6 +493,7 @@ function MembersPanel() {
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [completenessFilter, setCompletenessFilter] = useState('');
+  const [faceFilter, setFaceFilter] = useState('');       // ← NEW
   const [busyId, setBusyId] = useState(null);
   const [summary, setSummary] = useState(null);
 
@@ -549,6 +550,7 @@ function MembersPanel() {
       const params = new URLSearchParams();
       if (q) params.set('q', q);
       if (roleFilter) params.set('role', roleFilter);
+      if (faceFilter) params.set('face', faceFilter);     // ← NEW
       const qs = params.toString();
       const d = await api.get(`/members/${qs ? '?' + qs : ''}`);
       const list = Array.isArray(d) ? d : (d.results || []);
@@ -560,7 +562,7 @@ function MembersPanel() {
     }
   }
 
-  useEffect(() => { load(); }, [roleFilter]);
+  useEffect(() => { load(); }, [roleFilter, faceFilter]);
   useEffect(() => { fetchSummary(); }, []);
   // eslint-disable-next-line react-hooks/exhaustive-deps
 
@@ -644,6 +646,9 @@ function MembersPanel() {
   // otherwise fall back to the current members array
   const completeCount = summary?.complete ?? members.filter((m) => memberCompletion(m).complete).length;
   const incompleteCount = summary?.incomplete ?? (members.length - completeCount);
+
+  const faceEnrolledCount = summary?.face_enrolled ?? members.filter((m) => m.face_enrolled).length;
+  const faceNotEnrolledCount = summary?.face_not_enrolled ?? (members.length - faceEnrolledCount);
 
   return (
     <div>
@@ -818,6 +823,50 @@ function MembersPanel() {
         </div>
       )}
 
+      {/* ── Face enrollment summary banner (NEW) ────────── */}
+      {summary && summary.face_enrolled !== undefined && summary.total > 0 && (
+        <div style={{
+          padding: '12px 18px',
+          marginBottom: 16,
+          background: 'linear-gradient(90deg, #f0fdf4 0%, #ffffff 100%)',
+          border: '1px solid #bbf7d0',
+          borderLeft: '4px solid var(--success)',
+          borderRadius: 'var(--radius)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12,
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{
+              fontSize: 11,
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              color: 'var(--success)',
+              fontWeight: 700,
+              marginBottom: 2,
+            }}>
+              Face enrollment
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--slate-700)' }}>
+              <strong style={{ color: 'var(--success)' }}>{summary.face_enrolled}</strong> enrolled
+              {' · '}
+              <strong>{summary.face_not_enrolled}</strong> not enrolled yet
+            </div>
+          </div>
+          <div style={{
+            fontSize: 32,
+            fontWeight: 800,
+            letterSpacing: '-0.04em',
+            color: 'var(--success)',
+            fontVariantNumeric: 'tabular-nums',
+          }}>
+            {summary.total > 0 ? Math.round((summary.face_enrolled / summary.total) * 100) : 0}%
+          </div>
+        </div>
+      )}
+
       <form
         onSubmit={(e) => { e.preventDefault(); load(); }}
         style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}
@@ -840,7 +889,7 @@ function MembersPanel() {
         <FilterChip active={roleFilter === 'admin'} onClick={() => setRoleFilter('admin')}>Admins</FilterChip>
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{
           fontSize: 11,
           textTransform: 'uppercase',
@@ -868,6 +917,38 @@ function MembersPanel() {
           onClick={() => setCompletenessFilter('incomplete')}
         >
           ⚠ Incomplete ({incompleteCount})
+        </FilterChip>
+      </div>
+
+      {/* ── Face enrollment filter (NEW) ──────────────── */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{
+          fontSize: 11,
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          color: 'var(--text-muted)',
+          fontWeight: 600,
+          marginRight: 4,
+        }}>
+          Face:
+        </span>
+        <FilterChip
+          active={!faceFilter}
+          onClick={() => setFaceFilter('')}
+        >
+          All
+        </FilterChip>
+        <FilterChip
+          active={faceFilter === 'enrolled'}
+          onClick={() => setFaceFilter('enrolled')}
+        >
+          🧑 Enrolled ({faceEnrolledCount})
+        </FilterChip>
+        <FilterChip
+          active={faceFilter === 'not_enrolled'}
+          onClick={() => setFaceFilter('not_enrolled')}
+        >
+          Not enrolled ({faceNotEnrolledCount})
         </FilterChip>
       </div>
 
@@ -901,14 +982,22 @@ function MembersPanel() {
         <EmptyState
           icon="👥"
           title={
-            completenessFilter === 'complete'
+            faceFilter === 'enrolled'
+              ? 'No members have enrolled their face yet'
+              : faceFilter === 'not_enrolled'
+              ? 'Everyone has enrolled their face — impressive!'
+              : completenessFilter === 'complete'
               ? 'No members with complete profiles yet'
               : completenessFilter === 'incomplete'
               ? 'Everyone has filled in their details'
               : 'No members match'
           }
           body={
-            completenessFilter === 'complete'
+            faceFilter === 'enrolled'
+              ? 'Open face enrollment from the dashboard and ask students to enrol from their Profile page.'
+              : faceFilter === 'not_enrolled'
+              ? 'All students have enrolled. Nice work!'
+              : completenessFilter === 'complete'
               ? 'Students need a phone number and index number to be complete.'
               : completenessFilter === 'incomplete'
               ? 'All members have both phone and index number. Nice work!'
@@ -1043,6 +1132,24 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
                 ⚠ {missingLabel}
               </span>
             )}
+            {/* Face enrollment badge (NEW) */}
+            {member.face_enrolled ? (
+              <span className="badge badge-success" style={{ fontSize: 10 }}>
+                🧑 Face ✓
+              </span>
+            ) : (
+              <span
+                className="badge"
+                style={{
+                  fontSize: 10,
+                  background: 'var(--slate-100)',
+                  color: 'var(--slate-500)',
+                  fontWeight: 600,
+                }}
+              >
+                🧑 —
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -1080,6 +1187,21 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
               whiteSpace: 'nowrap', minWidth: 0, flex: 1,
             }}>
               {member.email}
+            </span>
+          </div>
+        )}
+        {/* Face enrollment date (NEW) */}
+        {member.face_enrolled && member.face_enrolled_at && (
+          <div style={{
+            display: 'flex', gap: 6, alignItems: 'center',
+            color: 'var(--slate-600)', minWidth: 0,
+          }}>
+            <span style={{ flexShrink: 0 }}>🧑</span>
+            <span style={{
+              overflow: 'hidden', textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap', minWidth: 0, flex: 1,
+            }}>
+              Face enrolled {new Date(member.face_enrolled_at).toLocaleDateString()}
             </span>
           </div>
         )}

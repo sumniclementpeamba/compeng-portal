@@ -52,7 +52,6 @@ from attendance.face import extract_embedding
 # Helpers
 # ─────────────────────────────────────────────────────────────
 def _looks_like_reference(value: str) -> bool:
-    """A reference number is 9 alphanumeric characters, e.g. UA2613334."""
     if not value:
         return False
     s = value.strip()
@@ -60,10 +59,6 @@ def _looks_like_reference(value: str) -> bool:
 
 
 def _build_member_rows():
-    """Return (headers, rows) shared by both CSV and XLSX export.
-
-    Centralized so the two formats stay in sync forever.
-    """
     headers = [
         "Reference Number", "Full Name", "Contact",
         "Index Number", "Level", "Role", "Email", "Joined",
@@ -94,12 +89,6 @@ def _build_member_rows():
 
 
 def _profile_completeness(user):
-    """Return (is_complete, missing_fields).
-
-    Complete = has first_name, phone_number, and index_number.
-    Same definition used by MemberSummaryView, so the admin's
-    dashboard counts and this gate stay consistent.
-    """
     missing = []
     if not (user.first_name or '').strip():
         missing.append('name')
@@ -111,7 +100,7 @@ def _profile_completeness(user):
 
 
 # ─────────────────────────────────────────────────────────────
-# Register — admin-only, manual account creation
+# Register
 # ─────────────────────────────────────────────────────────────
 class RegisterView(APIView):
     permission_classes = [IsAdminRole]
@@ -129,7 +118,7 @@ class RegisterView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Login — reference number first, then legacy fallbacks
+# Login
 # ─────────────────────────────────────────────────────────────
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -185,7 +174,7 @@ class LoginView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Me — get / patch own profile
+# Me
 # ─────────────────────────────────────────────────────────────
 class MeView(APIView):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
@@ -207,7 +196,7 @@ class MeView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Own avatar — GET (?token=) / DELETE
+# Own avatar
 # ─────────────────────────────────────────────────────────────
 class MeAvatarView(APIView):
     def get_permissions(self):
@@ -251,7 +240,7 @@ class MeAvatarView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Members — list (no pagination; class roster is a fixed set)
+# Members — list
 # ─────────────────────────────────────────────────────────────
 class MemberListView(generics.ListAPIView):
     serializer_class = MemberListSerializer
@@ -308,11 +297,18 @@ class MemberListView(generics.ListAPIView):
         if level:
             qs = qs.filter(level=level)
 
+        # Face enrollment filter
+        face = p.get("face")
+        if face == "enrolled":
+            qs = qs.filter(face_embedding__isnull=False)
+        elif face == "not_enrolled":
+            qs = qs.filter(face_embedding__isnull=True)
+
         return qs
 
 
 # ─────────────────────────────────────────────────────────────
-# Any member's avatar — rep/admin only
+# Member avatar
 # ─────────────────────────────────────────────────────────────
 class MemberAvatarView(APIView):
     authentication_classes = []
@@ -351,7 +347,7 @@ class MemberAvatarView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Change a member's role — admin only
+# Member role update
 # ─────────────────────────────────────────────────────────────
 class MemberRoleUpdateView(APIView):
     permission_classes = [IsAdminRole]
@@ -408,7 +404,7 @@ class MemberRoleUpdateView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# CSV import of class roster — admin only
+# Member CSV import
 # ─────────────────────────────────────────────────────────────
 class MemberCSVUploadView(APIView):
     permission_classes = [IsAdminRole]
@@ -443,7 +439,7 @@ class MemberCSVUploadView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Force-reset all non-admin passwords to the general password
+# Reset all passwords
 # ─────────────────────────────────────────────────────────────
 class ResetAllPasswordsView(APIView):
     permission_classes = [IsAdminRole]
@@ -467,19 +463,9 @@ class ResetAllPasswordsView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Export all members — CSV or XLSX (admin only)
+# Member export
 # ─────────────────────────────────────────────────────────────
 class MemberExportView(APIView):
-    """Download every class member's details.
-
-    Query params:
-        ?format=csv   → plain UTF-8 CSV with BOM (default)
-        ?format=xlsx  → Excel workbook with styled header, autosized
-                        columns, and frozen header row
-
-    Admin only.
-    """
-
     permission_classes = [IsAdminRole]
 
     def get(self, request):
@@ -504,7 +490,7 @@ class MemberExportView(APIView):
         response["Content-Disposition"] = (
             f'attachment; filename="members-{today}.csv"'
         )
-        response.write("\ufeff")  # UTF-8 BOM so Excel opens cleanly
+        response.write("\ufeff")
 
         writer = csv.writer(response)
         writer.writerow(headers)
@@ -518,7 +504,6 @@ class MemberExportView(APIView):
         ws = wb.active
         ws.title = "Members"
 
-        # Header styling
         header_font = Font(bold=True, color="FFFFFF", size=11)
         header_fill = PatternFill(
             start_color="1D4ED8", end_color="1D4ED8", fill_type="solid",
@@ -531,12 +516,10 @@ class MemberExportView(APIView):
             cell.fill = header_fill
             cell.alignment = header_align
 
-        # Data rows
         for row_idx, row in enumerate(rows, start=2):
             for col_idx, value in enumerate(row, start=1):
                 ws.cell(row=row_idx, column=col_idx, value=value)
 
-        # Autosize columns
         for col_idx in range(1, len(headers) + 1):
             col_letter = ws.cell(row=1, column=col_idx).column_letter
             max_len = len(str(headers[col_idx - 1]))
@@ -546,13 +529,9 @@ class MemberExportView(APIView):
                     max_len = max(max_len, len(str(val)))
             ws.column_dimensions[col_letter].width = min(max_len + 2, 40)
 
-        # Freeze header row so it stays visible while scrolling
         ws.freeze_panes = "A2"
-
-        # Row height for header
         ws.row_dimensions[1].height = 22
 
-        # Write to buffer
         buffer = io.BytesIO()
         wb.save(buffer)
         buffer.seek(0)
@@ -571,7 +550,7 @@ class MemberExportView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Notifications — REST
+# Notifications
 # ─────────────────────────────────────────────────────────────
 class NotificationListView(generics.ListAPIView):
     serializer_class = NotificationSerializer
@@ -604,9 +583,6 @@ class NotificationMarkAllReadView(APIView):
         return Response({"ok": True})
 
 
-# ─────────────────────────────────────────────────────────────
-# Notifications — SSE stream
-# ─────────────────────────────────────────────────────────────
 @csrf_exempt
 def notification_stream(request):
     user = request.user if getattr(request.user, "is_authenticated", False) else None
@@ -659,19 +635,9 @@ def notification_stream(request):
 
 
 # ─────────────────────────────────────────────────────────────
-# Members summary — quick completeness counts (rep/admin)
+# Member summary — with face enrollment counts
 # ─────────────────────────────────────────────────────────────
 class MemberSummaryView(APIView):
-    """Counts of members by profile completeness.
-
-    "Complete" = has a non-empty phone_number AND a non-empty
-    index_number. These are the two fields the rep needs to run
-    attendance and reach students. Email and level are optional.
-
-    Reps need this too — they're the ones who chase students
-    for their missing details.
-    """
-
     permission_classes = [CanReview]
 
     def get(self, request):
@@ -687,12 +653,17 @@ class MemberSummaryView(APIView):
         missing_phone = qs.filter(~has_phone).count()
         missing_index = qs.filter(~has_index).count()
 
+        face_enrolled = qs.filter(face_embedding__isnull=False).count()
+        face_not_enrolled = total - face_enrolled
+
         return Response({
             "total": total,
             "complete": complete,
             "incomplete": incomplete,
             "missing_phone": missing_phone,
             "missing_index": missing_index,
+            "face_enrolled": face_enrolled,
+            "face_not_enrolled": face_not_enrolled,
         })
 
 
@@ -710,14 +681,12 @@ def face_status(request):
         'enrolled_at': u.face_enrolled_at,
         'consent': u.face_consent_given,
         'consent_at': u.face_consent_at,
-        # System-wide flags — the frontend uses these to gate the UI
         'enrollment_open': setting.is_open,
         'enrollment_updated_at': setting.updated_at,
         'enrollment_updated_by': (
             (setting.updated_by.first_name or setting.updated_by.username)
             if setting.updated_by else None
         ),
-        # Profile gate
         'profile_complete': profile_complete,
         'profile_missing': profile_missing,
     })
@@ -726,7 +695,6 @@ def face_status(request):
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def face_enroll(request):
-    # Gate 1: profile must be complete
     profile_complete, missing = _profile_completeness(request.user)
     if not profile_complete:
         labels = {
@@ -748,7 +716,6 @@ def face_enroll(request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
-    # Gate 2: admin must have opened enrollment
     setting = FaceEnrollmentSetting.get_solo()
     if not setting.is_open:
         return Response(
@@ -803,16 +770,6 @@ def face_enroll(request):
 @api_view(['DELETE', 'POST'])
 @permission_classes([IsAuthenticated])
 def face_delete(request):
-    """Delete the requesting user's face data.
-
-    Accepts both DELETE and POST — the frontend's shared api client
-    doesn't expose delete, so POST is provided as an equivalent path
-    for the "Remove my face data" action.
-
-    NOT gated by enrollment_open or profile_complete: students must
-    always be able to remove their biometric data, regardless of the
-    admin's enrollment state or their profile completeness.
-    """
     u = request.user
     if u.face_enrollment_photo:
         u.face_enrollment_photo.delete(save=False)
@@ -829,22 +786,30 @@ def face_delete(request):
 
 
 # ─────────────────────────────────────────────────────────────
-# Face enrollment setting — system-wide toggle (admin)
+# Face enrollment setting — with counts
 # ─────────────────────────────────────────────────────────────
 class FaceEnrollmentSettingView(APIView):
-    """Read/write the face enrollment open/closed flag.
-
-    GET  — any authenticated user (students need to know whether
-           to show the "Start enrollment" button)
-    POST — admin only (opens or closes enrollment system-wide)
-    """
-
     def get_permissions(self):
         if self.request.method == 'GET':
             return [IsAuthenticated()]
         return [IsAdminRole()]
 
     def _serialize(self, setting):
+        member_qs = User.objects.filter(membership__isnull=False)
+        total_members = member_qs.count()
+        enrolled_count = member_qs.filter(face_embedding__isnull=False).count()
+
+        eligible_not_enrolled = (
+            member_qs
+            .exclude(
+                Q(first_name="") | Q(first_name__isnull=True)
+                | Q(phone_number="") | Q(phone_number__isnull=True)
+                | Q(index_number="") | Q(index_number__isnull=True)
+            )
+            .filter(face_embedding__isnull=True)
+            .count()
+        )
+
         return {
             'is_open': setting.is_open,
             'updated_at': setting.updated_at,
@@ -852,6 +817,9 @@ class FaceEnrollmentSettingView(APIView):
                 (setting.updated_by.first_name or setting.updated_by.username)
                 if setting.updated_by else None
             ),
+            'total_members': total_members,
+            'enrolled_count': enrolled_count,
+            'eligible_not_enrolled': eligible_not_enrolled,
         }
 
     def get(self, request):
