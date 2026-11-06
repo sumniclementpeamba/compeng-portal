@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import FaceCapture from './FaceCapture';
+
+const PROFILE_FIELD_LABELS = {
+  name: 'Full name',
+  phone_number: 'Phone number',
+  index_number: 'Index number',
+};
 
 const FaceEnrollStyles = () => (
   <style>{`
@@ -21,6 +28,7 @@ const FaceEnrollStyles = () => (
 );
 
 export default function FaceEnrollment() {
+  const { user } = useAuth();
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -51,7 +59,12 @@ export default function FaceEnrollment() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  // Re-fetch when the user's profile fields change (e.g., after saving
+  // a phone number in the Edit profile form above).
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.first_name, user?.phone_number, user?.index_number]);
 
   function openModal() {
     setErr('');
@@ -111,24 +124,29 @@ export default function FaceEnrollment() {
         setTimeout(() => setMsg(''), 5000);
       }, 1200);
     } catch (e) {
-      // Detect the "closed by admin" case explicitly
-      const isClosed =
-        e?.status === 403 && e?.data?.reason === 'enrollment_closed';
+      const reason = e?.data?.reason;
+      let detail;
 
-      const detail = isClosed
-        ? 'Face enrollment is currently closed by the course admin. '
-          + 'They will open it when it is time to enrol. '
-          + 'You can still check in if you are already enrolled.'
-        : e?.data?.detail ||
-          (e?.status === 400 && e?.data?.reason === 'no_face' &&
-            'No face detected in the photo. Try better lighting and centre your face.') ||
-          e?.message ||
-          'Could not enroll your face. Please try again.';
+      if (reason === 'profile_incomplete') {
+        detail =
+          e?.data?.detail ||
+          'Complete your profile (name, phone, index number) before enrolling your face.';
+      } else if (reason === 'enrollment_closed') {
+        detail =
+          'Face enrollment is currently closed by the course admin. '
+          + 'They will open it when it is time to enrol.';
+      } else if (e?.status === 400 && e?.data?.reason === 'no_face') {
+        detail = 'No face detected in the photo. Try better lighting and centre your face.';
+      } else {
+        detail = e?.data?.detail || e?.message || 'Could not enroll your face. Please try again.';
+      }
 
       setErr(detail);
       setModalStep('confirm');
-      // If they got closed mid-flow, refresh status so the card updates
-      if (isClosed) load();
+      // If either gate changed state server-side, refresh
+      if (reason === 'profile_incomplete' || reason === 'enrollment_closed') {
+        load();
+      }
     } finally {
       setBusy(false);
     }
@@ -161,15 +179,65 @@ export default function FaceEnrollment() {
   }
 
   const enrolled = status?.enrolled === true;
-  const enrollmentOpen = status?.enrollment_open !== false; // fail-open if missing
+  const enrollmentOpen = status?.enrollment_open !== false;
+  const profileComplete = status?.profile_complete !== false;
+  const profileMissing = status?.profile_missing || [];
   const enrolledDate = status?.enrolled_at
     ? new Date(status.enrolled_at).toLocaleDateString(undefined, {
         year: 'numeric', month: 'short', day: 'numeric',
       })
     : null;
 
-  // Closed-for-new-enrollees state
-  const showClosedForNew = !enrolled && !enrollmentOpen;
+  // ── State selection ────────────────────────────────────────
+  let stateKey, stateColor, stateBg, stateIcon, stateBadge, stateBadgeVariant;
+  if (!profileComplete && !enrolled) {
+    stateKey = 'profile_incomplete';
+    stateColor = 'var(--danger)';
+    stateBg = 'linear-gradient(180deg, #fef2f2 0%, #ffffff 60%)';
+    stateIcon = '⚠️';
+    stateBadge = 'Complete profile';
+    stateBadgeVariant = 'badge-danger';
+  } else if (enrolled) {
+    stateKey = 'enrolled';
+    stateColor = 'var(--success)';
+    stateBg = 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 60%)';
+    stateIcon = '✓';
+    stateBadge = 'Enrolled';
+    stateBadgeVariant = 'badge-success';
+  } else if (!enrollmentOpen) {
+    stateKey = 'closed';
+    stateColor = 'var(--slate-400)';
+    stateBg = 'linear-gradient(180deg, #f8fafc 0%, #ffffff 60%)';
+    stateIcon = '🔒';
+    stateBadge = 'Closed';
+    stateBadgeVariant = 'badge-neutral';
+  } else {
+    stateKey = 'ready';
+    stateColor = 'var(--brand)';
+    stateBg = 'linear-gradient(180deg, #eff6ff 0%, #ffffff 60%)';
+    stateIcon = '🧑';
+    stateBadge = 'Not set up';
+    stateBadgeVariant = 'badge-warning';
+  }
+
+  const iconGradient =
+    stateKey === 'enrolled'
+      ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
+      : stateKey === 'profile_incomplete'
+      ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
+      : stateKey === 'closed'
+      ? 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)'
+      : 'linear-gradient(135deg, var(--brand) 0%, var(--brand-600, #1d4ed8) 100%)';
+
+  const subtitle = enrolled
+    ? profileComplete
+      ? `Your face is enrolled${enrolledDate ? ` since ${enrolledDate}` : ''}. It's used only to confirm it's you when checking in.`
+      : 'Your face is enrolled and check-in still works. Complete your profile to allow re-enrollment.'
+    : stateKey === 'profile_incomplete'
+    ? 'Before you can enrol your face, complete your profile. The details are used to link attendance to you.'
+    : stateKey === 'closed'
+    ? 'Face enrollment is currently closed by your course admin. They will open it when it is time for the class to enrol.'
+    : "Enrol a photo of your face so the system can confirm it's really you when you check in to class.";
 
   return (
     <>
@@ -177,55 +245,27 @@ export default function FaceEnrollment() {
 
       <div
         className="card"
-        style={{
-          padding: 0,
-          overflow: 'hidden',
-          borderLeft: enrolled
-            ? '3px solid var(--success)'
-            : showClosedForNew
-            ? '3px solid var(--slate-400)'
-            : '3px solid var(--brand)',
-          background: enrolled
-            ? 'linear-gradient(180deg, #f0fdf4 0%, #ffffff 60%)'
-            : showClosedForNew
-            ? 'linear-gradient(180deg, #f8fafc 0%, #ffffff 60%)'
-            : 'linear-gradient(180deg, #eff6ff 0%, #ffffff 60%)',
-        }}
+        style={{ padding: 0, overflow: 'hidden', borderLeft: `3px solid ${stateColor}`, background: stateBg }}
       >
         <div style={{ padding: '20px 20px 0', display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-          <div
-            style={{
-              width: 48, height: 48, borderRadius: 14,
-              background: enrolled
-                ? 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)'
-                : showClosedForNew
-                ? 'linear-gradient(135deg, #94a3b8 0%, #64748b 100%)'
-                : 'linear-gradient(135deg, var(--brand) 0%, var(--brand-600, #1d4ed8) 100%)',
-              display: 'grid', placeItems: 'center', fontSize: 22,
-              flexShrink: 0, color: '#fff', fontWeight: 700,
-            }}
-          >
-            {enrolled ? '✓' : showClosedForNew ? '🔒' : '🧑'}
+          <div style={{
+            width: 48, height: 48, borderRadius: 14, background: iconGradient,
+            display: 'grid', placeItems: 'center', fontSize: 22, flexShrink: 0,
+            color: '#fff', fontWeight: 700,
+          }}>
+            {stateIcon}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
               <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, letterSpacing: '-0.01em' }}>
                 Face verification
               </h3>
-              {enrolled ? (
-                <span className="badge badge-success" style={{ fontSize: 10 }}>✓ Enrolled</span>
-              ) : showClosedForNew ? (
-                <span className="badge badge-neutral" style={{ fontSize: 10 }}>🔒 Closed</span>
-              ) : (
-                <span className="badge badge-warning" style={{ fontSize: 10 }}>⚠ Not set up</span>
-              )}
+              <span className={`badge ${stateBadgeVariant}`} style={{ fontSize: 10 }}>
+                {stateBadge}
+              </span>
             </div>
             <p style={{ fontSize: 13, color: 'var(--slate-600)', margin: 0, lineHeight: 1.55 }}>
-              {enrolled
-                ? `Your face is enrolled${enrolledDate ? ` since ${enrolledDate}` : ''}. It's used only to confirm it's you when checking in.`
-                : showClosedForNew
-                ? 'Face enrollment is currently closed by your course admin. They will open it when it is time for the class to enrol.'
-                : "Enrol a photo of your face so the system can confirm it's really you when you check in to class."}
+              {subtitle}
             </p>
           </div>
         </div>
@@ -248,59 +288,39 @@ export default function FaceEnrollment() {
             }}>{err}</div>
           )}
 
-          {enrolled ? (
-            <div style={{ display: 'grid', gap: 12 }}>
-              <div style={{
-                padding: '12px 14px', background: 'var(--slate-50)', borderRadius: 10,
-                fontSize: 12, color: 'var(--slate-700)', lineHeight: 1.6,
-                display: 'grid', gap: 8,
-              }}>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <span>📷</span>
-                  <span>Check-in opens your camera and captures with a countdown.</span>
+          {stateKey === 'profile_incomplete' && (
+            <div style={{
+              padding: '14px 16px', background: '#fff',
+              border: '1px solid #fecaca', borderLeft: '3px solid var(--danger)',
+              borderRadius: 10, fontSize: 13, color: 'var(--slate-700)',
+              lineHeight: 1.6, display: 'grid', gap: 12,
+            }}>
+              <div>
+                <div style={{ fontWeight: 700, marginBottom: 4, color: 'var(--danger)' }}>
+                  Complete your profile first
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <span>🔒</span>
-                  <span>Photos are stored securely. Only you and your rep can review flagged check-ins.</span>
-                </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <span>🔄</span>
-                  <span>Changed appearance? Re-enrol to keep verification accurate.</span>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  onClick={openModal}
-                  disabled={busy || !enrollmentOpen}
-                  className="btn-primary"
-                  style={{ padding: '9px 16px', opacity: !enrollmentOpen ? 0.5 : 1, cursor: !enrollmentOpen ? 'not-allowed' : 'pointer' }}
-                  title={!enrollmentOpen ? 'Admin has closed enrollment' : undefined}
-                >
-                  ↻ Re-enroll face
-                </button>
-                <button
-                  type="button"
-                  onClick={removeFace}
-                  disabled={busy}
-                  style={{
-                    padding: '9px 16px', background: '#fff',
-                    border: '1px solid #fecaca', color: 'var(--danger)',
-                    borderRadius: 'var(--radius-sm)', fontSize: 13, fontWeight: 500,
-                    cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1,
-                  }}
-                >
-                  Remove my face data
-                </button>
-              </div>
-              {!enrollmentOpen && (
-                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
-                  Enrollment is closed — you can still check in with your existing face. Re-enrolment
-                  will be available when the admin opens enrollment again.
+                <p style={{ margin: 0 }}>
+                  To enrol your face, please fill in the following in your profile:
                 </p>
-              )}
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 4 }}>
+                {profileMissing.map((f) => (
+                  <li key={f} style={{ fontWeight: 500 }}>
+                    {PROFILE_FIELD_LABELS[f] || f}
+                  </li>
+                ))}
+              </ul>
+              <div style={{
+                padding: '10px 12px', background: 'var(--slate-50)',
+                borderRadius: 8, fontSize: 12, lineHeight: 1.55,
+              }}>
+                Click <strong>Edit profile</strong> at the top of this page, fill in the
+                missing details, and save. This card will unlock automatically.
+              </div>
             </div>
-          ) : showClosedForNew ? (
+          )}
+
+          {stateKey === 'closed' && (
             <div style={{
               padding: '14px 16px', background: '#fff',
               border: '1px dashed var(--border-strong)', borderRadius: 10,
@@ -310,13 +330,15 @@ export default function FaceEnrollment() {
                 <span style={{ fontSize: 20, flexShrink: 0 }}>ℹ️</span>
                 <div>
                   <div style={{ fontWeight: 600, marginBottom: 4 }}>Enrollment is closed</div>
-                  Your course admin controls when face enrollment is open. They will open it when
-                  it is time for the class to enrol — you'll see a "Start enrollment" button here
-                  when that happens.
+                  Your course admin controls when face enrollment is open. You'll see a
+                  "Start enrollment" button here when that happens. You can still check in
+                  if you have already enrolled.
                 </div>
               </div>
             </div>
-          ) : (
+          )}
+
+          {stateKey === 'ready' && (
             <div style={{ display: 'grid', gap: 14 }}>
               <div style={{
                 padding: '14px 16px', background: '#fff',
@@ -326,10 +348,7 @@ export default function FaceEnrollment() {
                   fontSize: 11, fontWeight: 700, color: 'var(--slate-700)',
                   textTransform: 'uppercase', letterSpacing: '0.06em',
                 }}>How it works</div>
-                <div style={{
-                  display: 'grid', gap: 10, fontSize: 13,
-                  color: 'var(--slate-700)', lineHeight: 1.55,
-                }}>
+                <div style={{ display: 'grid', gap: 10, fontSize: 13, color: 'var(--slate-700)', lineHeight: 1.55 }}>
                   {[
                     'Open the camera and centre your face',
                     'We capture automatically once your face is steady',
@@ -383,6 +402,82 @@ export default function FaceEnrollment() {
               >
                 📷 Start enrollment
               </button>
+            </div>
+          )}
+
+          {stateKey === 'enrolled' && (
+            <div style={{ display: 'grid', gap: 12 }}>
+              {!profileComplete && (
+                <div style={{
+                  padding: '10px 14px', background: '#fef3c7',
+                  border: '1px solid #fde68a', borderRadius: 10,
+                  fontSize: 12, color: '#92400e', lineHeight: 1.55,
+                }}>
+                  ⚠ Your profile is missing: <strong>{profileMissing.map(f => PROFILE_FIELD_LABELS[f] || f).join(', ')}</strong>.
+                  Check-in still works, but re-enrollment is disabled until you fix this.
+                </div>
+              )}
+
+              <div style={{
+                padding: '12px 14px', background: 'var(--slate-50)', borderRadius: 10,
+                fontSize: 12, color: 'var(--slate-700)', lineHeight: 1.6, display: 'grid', gap: 8,
+              }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <span>📷</span>
+                  <span>Check-in opens your camera and captures with a countdown.</span>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <span>🔒</span>
+                  <span>Photos are stored securely. Only you and your rep can review flagged check-ins.</span>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <span>🔄</span>
+                  <span>Changed appearance? Re-enrol to keep verification accurate.</span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={openModal}
+                  disabled={busy || !enrollmentOpen || !profileComplete}
+                  className="btn-primary"
+                  style={{
+                    padding: '9px 16px',
+                    opacity: (!enrollmentOpen || !profileComplete) ? 0.5 : 1,
+                    cursor: (!enrollmentOpen || !profileComplete) ? 'not-allowed' : 'pointer',
+                  }}
+                  title={
+                    !profileComplete
+                      ? 'Complete your profile to re-enroll'
+                      : !enrollmentOpen
+                      ? 'Admin has closed enrollment'
+                      : undefined
+                  }
+                >
+                  ↻ Re-enroll face
+                </button>
+                <button
+                  type="button"
+                  onClick={removeFace}
+                  disabled={busy}
+                  style={{
+                    padding: '9px 16px', background: '#fff',
+                    border: '1px solid #fecaca', color: 'var(--danger)',
+                    borderRadius: 'var(--radius-sm)', fontSize: 13, fontWeight: 500,
+                    cursor: busy ? 'not-allowed' : 'pointer', opacity: busy ? 0.6 : 1,
+                  }}
+                >
+                  Remove my face data
+                </button>
+              </div>
+              {(!enrollmentOpen || !profileComplete) && (
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, lineHeight: 1.5 }}>
+                  {!profileComplete
+                    ? 'Complete your profile above to enable re-enrollment. Your current face enrollment still works for check-in.'
+                    : 'Enrollment is closed — you can still check in with your existing face. Re-enrollment will be available when the admin opens it again.'}
+                </p>
+              )}
             </div>
           )}
         </div>

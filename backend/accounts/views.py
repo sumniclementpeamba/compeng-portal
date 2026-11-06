@@ -47,6 +47,7 @@ from rest_framework.response import Response
 
 from attendance.face import extract_embedding
 
+
 # ─────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────
@@ -90,6 +91,23 @@ def _build_member_rows():
         ])
 
     return headers, rows, users.count()
+
+
+def _profile_completeness(user):
+    """Return (is_complete, missing_fields).
+
+    Complete = has first_name, phone_number, and index_number.
+    Same definition used by MemberSummaryView, so the admin's
+    dashboard counts and this gate stay consistent.
+    """
+    missing = []
+    if not (user.first_name or '').strip():
+        missing.append('name')
+    if not (user.phone_number or '').strip():
+        missing.append('phone_number')
+    if not (user.index_number or '').strip():
+        missing.append('index_number')
+    return (len(missing) == 0, missing)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -686,6 +704,7 @@ class MemberSummaryView(APIView):
 def face_status(request):
     u = request.user
     setting = FaceEnrollmentSetting.get_solo()
+    profile_complete, profile_missing = _profile_completeness(u)
     return Response({
         'enrolled': bool(u.face_embedding),
         'enrolled_at': u.face_enrolled_at,
@@ -698,13 +717,38 @@ def face_status(request):
             (setting.updated_by.first_name or setting.updated_by.username)
             if setting.updated_by else None
         ),
+        # Profile gate
+        'profile_complete': profile_complete,
+        'profile_missing': profile_missing,
     })
 
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def face_enroll(request):
-    # Gate: admin must have opened enrollment
+    # Gate 1: profile must be complete
+    profile_complete, missing = _profile_completeness(request.user)
+    if not profile_complete:
+        labels = {
+            'name': 'Full name',
+            'phone_number': 'Phone number',
+            'index_number': 'Index number',
+        }
+        readable = ', '.join(labels.get(f, f) for f in missing)
+        return Response(
+            {
+                'detail': (
+                    'Please complete your profile before enrolling your face. '
+                    f'Missing: {readable}. '
+                    'Click Edit profile on your Profile page, fill them in, and try again.'
+                ),
+                'reason': 'profile_incomplete',
+                'missing_fields': missing,
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Gate 2: admin must have opened enrollment
     setting = FaceEnrollmentSetting.get_solo()
     if not setting.is_open:
         return Response(
@@ -765,8 +809,9 @@ def face_delete(request):
     doesn't expose delete, so POST is provided as an equivalent path
     for the "Remove my face data" action.
 
-    NOT gated by enrollment_open: students must always be able to
-    remove their biometric data.
+    NOT gated by enrollment_open or profile_complete: students must
+    always be able to remove their biometric data, regardless of the
+    admin's enrollment state or their profile completeness.
     """
     u = request.user
     if u.face_enrollment_photo:
