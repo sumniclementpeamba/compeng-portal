@@ -16,28 +16,18 @@ class UserSerializer(serializers.ModelSerializer):
             'phone_number', 'index_number', 'level', 'avatar',
             'avatar_url', 'role', 'is_class_rep', 'display_name',
         ]
-        # role is a computed field (SerializerMethodField) so it's already
-        # read-only by construction; only list truly writable-then-locked
-        # DB fields here.
         read_only_fields = ['id', 'username', 'reference_number']
 
     def get_display_name(self, obj):
         return obj.first_name or obj.username
 
     def get_avatar_url(self, obj):
-        # Prefer a model-level property if one exists, otherwise derive
-        # it from the ImageField. Handles the common cases:
-        #   - custom @property on User → use it
-        #   - plain ImageField → obj.avatar.url
-        #   - empty avatar → None (obj.avatar.url raises ValueError)
-        if hasattr(obj, 'avatar_url'):
-            return obj.avatar_url
-        if obj.avatar:
-            try:
-                return obj.avatar.url
-            except ValueError:
-                return None
-        return None
+        # Relative path to the streaming view at /api/me/avatar/.
+        # The frontend does apiUrl(avatar_url) + ?token=... to fetch bytes,
+        # which respects R2 storage and validates the token server-side.
+        if not obj.avatar:
+            return None
+        return '/me/avatar/'
 
     def get_role(self, obj):
         from accounts.permissions import role_of
@@ -96,14 +86,11 @@ class MemberListSerializer(serializers.ModelSerializer):
         return role_of(obj)
 
     def get_avatar_url(self, obj):
-        if hasattr(obj, 'avatar_url'):
-            return obj.avatar_url
-        if obj.avatar:
-            try:
-                return obj.avatar.url
-            except ValueError:
-                return None
-        return None
+        # Relative path to the per-member streaming view.
+        # Frontend does apiUrl(avatar_url) + ?token=...
+        if not obj.avatar:
+            return None
+        return f'/members/{obj.id}/avatar/'
 
     def get_joined_at(self, obj):
         m = getattr(obj, 'membership', None)
