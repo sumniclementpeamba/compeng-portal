@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { announcementsApi, resourcesApi } from '../api/resources';
@@ -40,6 +40,49 @@ function CountUp({ value, duration = 900 }) {
   return <>{display}</>;
 }
 
+// ── Live clock so "in X min" / live badges tick ─────────────
+function useNow(intervalMs = 1000) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
+// ── Relative time for announcements ────────────────────────
+function relativeTime(dateStr) {
+  const date = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMin = Math.floor(diffMs / 60000);
+  const diffHr = Math.floor(diffMs / 3600000);
+  const diffDay = Math.floor(diffMs / 86400000);
+
+  if (diffMin < 1) return 'Just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffDay === 1) return 'Yesterday';
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+// ── Check-in window status for a single timetable entry ────
+function getCheckInStatus(entry, now) {
+  const [sh, sm] = (entry.start_time || '08:00').split(':').map(Number);
+  const [eh, em] = (entry.end_time || '10:00').split(':').map(Number);
+  const start = new Date(now);
+  start.setHours(sh, sm, 0, 0);
+  const end = new Date(now);
+  end.setHours(eh, em, 0, 0);
+  const open = new Date(start.getTime() - (entry.check_in_starts_minutes_before || 5) * 60000);
+  const close = new Date(end.getTime() + (entry.check_in_ends_minutes_after || 15) * 60000);
+
+  if (now < open) return { status: 'upcoming', inMs: open - now, start, end };
+  if (now >= open && now < close) return { status: 'open', closesInMs: close - now, start, end };
+  return { status: 'ended', start, end };
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const canManage = user?.role === 'rep' || user?.role === 'admin';
@@ -51,6 +94,8 @@ export default function Dashboard() {
   const [timetable, setTimetable] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
+
+  const now = useNow(1000);
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
@@ -94,6 +139,7 @@ export default function Dashboard() {
     .map(([name, count]) => ({ name, count }));
 
   const pinned = ann.filter((a) => a.pinned);
+  const unpinned = ann.filter((a) => !a.pinned);
   const topPinned = pinned[0];
   const pendingCount = recent.filter((r) => r.status === 'pending').length;
 
@@ -109,8 +155,66 @@ export default function Dashboard() {
     .filter((e) => e.day_of_week === todayIdx)
     .sort((a, b) => (a.start_time > b.start_time ? 1 : -1));
 
+  // Find live / next class for the contextual subtitle
+  const liveClass = todaysClasses.find((c) => getCheckInStatus(c, now).status === 'open');
+  const nextClass = todaysClasses.find((c) => getCheckInStatus(c, now).status === 'upcoming');
+
+  // Contextual subtitle
+  let subtitle;
+  let subtitleAction = null;
+  if (liveClass) {
+    const status = getCheckInStatus(liveClass, now);
+    const mins = Math.max(1, Math.ceil(status.closesInMs / 60000));
+    subtitle = (
+      <>
+        <span style={{
+          display: 'inline-block', width: 8, height: 8,
+          borderRadius: '50%', background: 'var(--success)',
+          marginRight: 8, boxShadow: '0 0 0 3px rgba(34,197,94,0.2)',
+          animation: 'dashPulse 2s ease-in-out infinite',
+        }} />
+        <strong style={{ color: 'var(--success)' }}>{liveClass.course_code}</strong>{' '}
+        check-in is open — closes in {mins} min
+      </>
+    );
+    subtitleAction = (
+      <Link to="/attendance" style={{
+        fontSize: 12, fontWeight: 700, color: 'var(--success)',
+        textDecoration: 'none', whiteSpace: 'nowrap',
+      }}>
+        Check in →
+      </Link>
+    );
+  } else if (nextClass) {
+    const status = getCheckInStatus(nextClass, now);
+    const mins = Math.max(1, Math.ceil(status.inMs / 60000));
+    subtitle = (
+      <>
+        Next class: <strong style={{ color: 'var(--text)' }}>{nextClass.course_code}</strong>
+        {nextClass.room && ` in ${nextClass.room}`} — in {mins} min
+      </>
+    );
+  } else if (canManage && pendingCount > 0) {
+    subtitle = (
+      <>
+        <strong style={{ color: 'var(--warning)' }}>{pendingCount}</strong>{' '}
+        resource{pendingCount === 1 ? '' : 's'} awaiting your review
+      </>
+    );
+    subtitleAction = (
+      <Link to="/manage" style={{ fontSize: 12, fontWeight: 700, color: 'var(--warning)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+        Review →
+      </Link>
+    );
+  } else if (recent.length > 0) {
+    subtitle = `${recent.length} resource${recent.length === 1 ? '' : 's'} from across your courses, ready to explore.`;
+  } else {
+    subtitle = 'Be the first to add to your class library.';
+  }
+
   return (
-    <div className="animate-fade-up" style={{ display: 'grid', gap: 28 }}>
+    <div className="animate-fade-up" style={{ display: 'grid', gap: 24 }}>
+      {/* ── Header ───────────────────────────────────────── */}
       <header style={{
         display: 'flex', justifyContent: 'space-between',
         alignItems: 'flex-end', flexWrap: 'wrap', gap: 16,
@@ -127,10 +231,12 @@ export default function Dashboard() {
           }}>
             {greeting()}, {firstName}
           </h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 6 }}>
-            {recent.length > 0
-              ? `${recent.length} resource${recent.length === 1 ? '' : 's'} from across your courses, ready to explore.`
-              : 'Be the first to add to your class library.'}
+          <p style={{
+            color: 'var(--text-muted)', fontSize: 14, marginTop: 8,
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+          }}>
+            <span>{subtitle}</span>
+            {subtitleAction}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -148,6 +254,19 @@ export default function Dashboard() {
           }}>＋ Upload</Link>
         </div>
       </header>
+
+      {/* ── Quick actions row ────────────────────────────── */}
+      <div style={{
+        display: 'flex', gap: 8, flexWrap: 'wrap',
+        paddingBottom: 4,
+      }}>
+        <QuickChip to="/upload" icon="＋" label="Upload" />
+        <QuickChip to="/resources" icon="🔍" label="Search" />
+        <QuickChip to="/attendance" icon="✓" label="Attendance" />
+        <QuickChip to="/timetable" icon="📅" label="Timetable" />
+        <QuickChip to="/offline" icon="📥" label="Offline" />
+        {canManage && <QuickChip to="/manage" icon="⚙" label="Review queue" accent />}
+      </div>
 
       {isAdmin && <FaceEnrollmentToggle />}
 
@@ -186,23 +305,38 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* ── Stat cards ───────────────────────────────────── */}
       <div className="dash-stats stagger">
-        <StatCard icon="📚" label="Resources" value={recent.length} href="/resources" accent="var(--brand)" />
-        <StatCard icon="📣" label="Announcements" value={ann.length} href="/announcements" accent="#f59e0b" />
-        <StatCard icon="📥" label="Offline saved" value={offlineCount} href="/offline" accent="var(--success)" />
+        <StatCard
+          icon="📚" label="Resources"
+          value={recent.length} href="/resources"
+          accent="var(--brand)"
+        />
+        <StatCard
+          icon="📣" label="Announcements"
+          value={ann.length} href="/announcements"
+          accent="#f59e0b"
+        />
+        <StatCard
+          icon="📥" label="Offline saved"
+          value={offlineCount} href="/offline"
+          accent="var(--success)"
+        />
         {canManage && (
           <StatCard
-            icon="⏳" label="Pending review" value={pendingCount}
-            href="/manage" accent="var(--warning)"
+            icon="⏳" label="Pending review"
+            value={pendingCount} href="/manage"
+            accent="var(--warning)"
             highlight={pendingCount > 0}
           />
         )}
       </div>
 
-      <div className="card" style={{ padding: 16, minWidth: 0 }}>
+      {/* ── Today's classes ──────────────────────────────── */}
+      <div className="card" style={{ padding: 20, minWidth: 0 }}>
         <div style={{
           display: 'flex', justifyContent: 'space-between',
-          alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 8,
+          alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8,
         }}>
           <h3 style={{
             fontSize: 11, textTransform: 'uppercase',
@@ -213,49 +347,112 @@ export default function Dashboard() {
             {canManage ? 'Manage' : 'Full week'} →
           </Link>
         </div>
+
         {todaysClasses.length === 0 ? (
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
-            No classes scheduled today.
-          </p>
+          <div style={{
+            padding: '16px 0', fontSize: 13, color: 'var(--text-muted)',
+            display: 'flex', alignItems: 'center', gap: 10,
+          }}>
+            <span style={{ fontSize: 20 }}>{todayIdx === -1 || todayIdx > 4 ? '🌤' : '☕'}</span>
+            <span>
+              {todayIdx === -1 || todayIdx > 4
+                ? 'No classes today — enjoy the weekend.'
+                : 'No classes scheduled today. Take it easy.'}
+            </span>
+          </div>
         ) : (
           <div style={{ display: 'grid', gap: 8 }}>
-            {todaysClasses.map((c) => (
-              <div key={c.id} style={{
-                display: 'flex', justifyContent: 'space-between',
-                alignItems: 'center', gap: 12, padding: '10px 12px',
-                background: 'var(--slate-50)', borderRadius: 'var(--radius-sm)',
-                flexWrap: 'wrap', minWidth: 0,
-              }}>
-                <div style={{ minWidth: 0, flex: '1 1 200px' }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                      {c.course_code}
-                    </span>
-                    {c.course_title && (
-                      <span style={{ fontSize: 12, color: 'var(--slate-600)' }}>
-                        {c.course_title}
+            {todaysClasses.map((c) => {
+              const status = getCheckInStatus(c, now);
+              const isLive = status.status === 'open';
+              const isUpcoming = status.status === 'upcoming';
+              const isEnded = status.status === 'ended';
+              const mins = isLive
+                ? Math.max(1, Math.ceil(status.closesInMs / 60000))
+                : isUpcoming
+                ? Math.max(1, Math.ceil(status.inMs / 60000))
+                : 0;
+
+              return (
+                <div
+                  key={c.id}
+                  style={{
+                    display: 'flex', justifyContent: 'space-between',
+                    alignItems: 'center', gap: 12, padding: '12px 14px',
+                    background: isLive ? 'rgba(34,197,94,0.06)' : 'var(--slate-50)',
+                    borderRadius: 'var(--radius-sm)',
+                    border: isLive ? '1px solid #bbf7d0' : '1px solid transparent',
+                    flexWrap: 'wrap', minWidth: 0,
+                    opacity: isEnded ? 0.65 : 1,
+                    transition: 'opacity 200ms, background 200ms',
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: '1 1 200px' }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                        {c.course_code}
                       </span>
-                    )}
+                      {c.course_title && (
+                        <span style={{ fontSize: 12, color: 'var(--slate-600)' }}>
+                          {c.course_title}
+                        </span>
+                      )}
+                      {isLive && (
+                        <span className="badge badge-success" style={{
+                          fontSize: 9, display: 'inline-flex',
+                          alignItems: 'center', gap: 4,
+                        }}>
+                          <span style={{
+                            width: 5, height: 5, borderRadius: '50%',
+                            background: 'currentColor',
+                          }} />
+                          LIVE · {mins}m left
+                        </span>
+                      )}
+                      {isUpcoming && (
+                        <span className="badge badge-neutral" style={{ fontSize: 9 }}>
+                          in {mins}m
+                        </span>
+                      )}
+                      {isEnded && (
+                        <span className="badge badge-neutral" style={{ fontSize: 9 }}>
+                          ended
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+                      {c.start_time} – {c.end_time}
+                      {c.room && ` · ${c.room}`}
+                    </div>
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    {c.start_time} – {c.end_time}
-                    {c.room && ` · ${c.room}`}
-                  </div>
+
+                  {isLive ? (
+                    <Link to="/attendance" style={{
+                      padding: '7px 14px', fontSize: 12, fontWeight: 700,
+                      borderRadius: 'var(--radius-pill)',
+                      background: 'var(--success)', color: '#fff',
+                      textDecoration: 'none', flexShrink: 0,
+                      boxShadow: '0 2px 8px rgba(34,197,94,0.3)',
+                    }}>Check in →</Link>
+                  ) : isUpcoming ? (
+                    <Link to="/attendance" style={{
+                      padding: '7px 14px', fontSize: 11, fontWeight: 500,
+                      borderRadius: 'var(--radius-pill)',
+                      border: '1px solid var(--border-strong)',
+                      background: '#fff', color: 'var(--slate-600)',
+                      textDecoration: 'none', flexShrink: 0,
+                    }}>View</Link>
+                  ) : null}
                 </div>
-                <Link to="/attendance" style={{
-                  padding: '5px 12px', fontSize: 11, fontWeight: 600,
-                  borderRadius: 'var(--radius-pill)',
-                  background: 'var(--brand)', color: '#fff',
-                  textDecoration: 'none', flexShrink: 0,
-                }}>Check in →</Link>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
 
+      {/* ── Two-column layout ────────────────────────────── */}
       <div className="dash-grid">
-        <div style={{ display: 'grid', gap: 28, minWidth: 0 }}>
+        <div style={{ display: 'grid', gap: 24, minWidth: 0 }}>
           <section style={{ minWidth: 0 }}>
             <SectionHeader title="Recently added" action="View all" actionHref="/resources" />
             {recent.length === 0 ? (
@@ -266,7 +463,7 @@ export default function Dashboard() {
               />
             ) : (
               <div className="dash-recents stagger">
-                {recent.slice(0, 6).map((r) => (
+                {recent.slice(0, 4).map((r) => (
                   <ResourceCard key={r.id} resource={r} canManage={canManage} />
                 ))}
               </div>
@@ -308,66 +505,155 @@ export default function Dashboard() {
           )}
         </div>
 
-        <aside style={{ display: 'grid', gap: 20, minWidth: 0 }}>
-          <div className="card" style={{ padding: 16, minWidth: 0 }}>
-            <h3 style={{
-              fontSize: 11, textTransform: 'uppercase',
-              letterSpacing: '0.08em', color: 'var(--text-muted)',
-              marginBottom: 12,
-            }}>Quick actions</h3>
-            <div style={{ display: 'grid', gap: 2 }}>
-              <QuickLink to="/upload" icon="＋" label="Upload resource" />
-              <QuickLink to="/resources" icon="🔍" label="Search library" />
-              <QuickLink to="/attendance" icon="✓" label="Check attendance" />
-              <QuickLink to="/timetable" icon="📅" label="View timetable" />
-              <QuickLink to="/offline" icon="📥" label="Offline materials" />
-              {canManage && <QuickLink to="/manage" icon="⚙" label="Review queue" />}
-            </div>
-          </div>
-
+        <aside style={{ display: 'grid', gap: 20, minWidth: 0, alignContent: 'start' }}>
           <div className="card" style={{ padding: 16, minWidth: 0 }}>
             <div style={{
               display: 'flex', justifyContent: 'space-between',
-              alignItems: 'baseline', marginBottom: 4, gap: 8,
+              alignItems: 'baseline', marginBottom: 8, gap: 8,
             }}>
               <h3 style={{
                 fontSize: 11, textTransform: 'uppercase',
                 letterSpacing: '0.08em', color: 'var(--text-muted)', minWidth: 0,
-              }}>Latest announcements</h3>
+              }}>Announcements</h3>
               {ann.length > 0 && (
                 <Link to="/announcements" style={{ fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
                   All →
                 </Link>
               )}
             </div>
+
             {ann.length === 0 ? (
               <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '12px 0 0' }}>
                 No announcements yet.
               </p>
             ) : (
-              <ul className="dash-ann-list stagger" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                {ann.slice(0, 4).map((a) => (
-                  <li key={a.id} style={{ minWidth: 0 }}>
-                    <Link to="/announcements" style={{
-                      display: 'block', padding: '8px 10px',
-                      borderRadius: 'var(--radius-sm)',
-                      textDecoration: 'none', color: 'var(--text)',
+              <>
+                {/* Pinned section (max 2, excluding the topPinned already shown in banner) */}
+                {pinned.length > 1 && (
+                  <>
+                    <div style={{
+                      fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                      letterSpacing: '0.06em', color: '#92400e',
+                      marginBottom: 4, marginTop: 4,
                     }}>
-                      <div style={{ fontSize: 13, fontWeight: 500, overflowWrap: 'anywhere' }}>
-                        {a.pinned && '📌 '}{a.title}
+                      📌 Pinned
+                    </div>
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                      {pinned.slice(1, 3).map((a) => (
+                        <li key={a.id} style={{ minWidth: 0 }}>
+                          <AnnouncementItem announcement={a} pinned />
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+
+                {/* Recent unpinned */}
+                {unpinned.length > 0 && (
+                  <>
+                    {pinned.length > 0 && (
+                      <div style={{
+                        fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                        letterSpacing: '0.06em', color: 'var(--text-muted)',
+                        marginBottom: 4, marginTop: 10,
+                      }}>
+                        Recent
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                        {new Date(a.created_at).toLocaleDateString()}
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+                    )}
+                    <ul className="dash-ann-list stagger" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                      {unpinned.slice(0, 4).map((a) => (
+                        <li key={a.id} style={{ minWidth: 0 }}>
+                          <AnnouncementItem announcement={a} />
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+
+                {/* If everything was pinned, still show the rest */}
+                {unpinned.length === 0 && pinned.length <= 1 && (
+                  <ul className="dash-ann-list stagger" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    {ann.slice(0, 4).map((a) => (
+                      <li key={a.id} style={{ minWidth: 0 }}>
+                        <AnnouncementItem announcement={a} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </div>
         </aside>
       </div>
+
+      <style>{`
+        @keyframes dashPulse {
+          0%, 100% { transform: scale(1); }
+          50%      { transform: scale(1.25); }
+        }
+      `}</style>
     </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// Announcement item
+// ═════════════════════════════════════════════════════════════
+function AnnouncementItem({ announcement, pinned }) {
+  return (
+    <Link
+      to="/announcements"
+      style={{
+        display: 'block', padding: '8px 10px',
+        borderRadius: 'var(--radius-sm)',
+        textDecoration: 'none', color: 'var(--text)',
+        borderLeft: pinned ? '2px solid #f59e0b' : '2px solid transparent',
+        background: pinned ? 'rgba(254, 243, 199, 0.35)' : 'transparent',
+        transition: 'background 160ms',
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--slate-50)'; }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = pinned ? 'rgba(254, 243, 199, 0.35)' : 'transparent';
+      }}
+    >
+      <div style={{
+        fontSize: 13, fontWeight: 500, overflowWrap: 'anywhere',
+        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+        overflow: 'hidden', lineHeight: 1.4,
+      }}>
+        {announcement.title}
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+        {relativeTime(announcement.created_at)}
+        {announcement.course_name && ` · ${announcement.course_name}`}
+      </div>
+    </Link>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════
+// Quick action chip
+// ═════════════════════════════════════════════════════════════
+function QuickChip({ to, icon, label, accent }) {
+  return (
+    <Link
+      to={to}
+      className="hover-lift"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '7px 12px',
+        borderRadius: 'var(--radius-pill)',
+        background: accent ? 'var(--warning-bg)' : '#fff',
+        border: `1px solid ${accent ? '#fcd34d' : 'var(--border)'}`,
+        color: accent ? '#92400e' : 'var(--slate-700)',
+        fontSize: 12, fontWeight: 500,
+        textDecoration: 'none', whiteSpace: 'nowrap',
+        transition: 'all 140ms ease',
+      }}
+    >
+      <span style={{ fontSize: 13 }}>{icon}</span>
+      <span>{label}</span>
+    </Link>
   );
 }
 
@@ -428,6 +714,10 @@ function FaceEnrollmentToggle() {
   const bg = isOpen
     ? 'linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%)'
     : 'linear-gradient(135deg, #fef3c7 0%, #ffffff 100%)';
+  const enrolledPct =
+    setting.total_members > 0
+      ? Math.round((setting.enrolled_count / setting.total_members) * 100)
+      : 0;
 
   return (
     <div className="card" style={{
@@ -444,47 +734,68 @@ function FaceEnrollmentToggle() {
             display: 'flex', alignItems: 'center',
             gap: 8, marginBottom: 6, flexWrap: 'wrap',
           }}>
-            <span style={{ fontSize: 22, lineHeight: 1 }}>{isOpen ? '🔓' : '🔒'}</span>
-            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, letterSpacing: '-0.01em' }}>
-              Face enrollment {isOpen ? 'is open' : 'is closed'}
-            </h3>
-            <span
-              className={`badge ${isOpen ? 'badge-success' : 'badge-warning'}`}
-              style={{ fontSize: 10 }}
-            >
-              {isOpen ? 'OPEN' : 'CLOSED'}
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              fontSize: 11, fontWeight: 700,
+              textTransform: 'uppercase', letterSpacing: '0.06em',
+              color: accent,
+            }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%',
+                background: accent,
+                boxShadow: `0 0 0 3px ${isOpen ? 'rgba(34,197,94,0.2)' : 'rgba(245,158,11,0.2)'}`,
+                animation: 'dashPulse 2s ease-in-out infinite',
+              }} />
+              {isOpen ? 'Open' : 'Closed'}
             </span>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, letterSpacing: '-0.01em' }}>
+              Face enrollment
+            </h3>
           </div>
-          <p style={{
-            fontSize: 13, color: 'var(--slate-700)',
-            margin: 0, lineHeight: 1.55,
-          }}>
+
+          <p style={{ fontSize: 13, color: 'var(--slate-700)', margin: '0 0 10px', lineHeight: 1.55 }}>
             {isOpen
-              ? 'Students can enrol their face from their Profile page. Close this when you want to stop new enrollments.'
-              : 'Students cannot enrol their faces right now. Open this when you are ready for the class to enrol.'}
+              ? 'Students can enrol their face from their Profile page.'
+              : 'Students cannot enrol their faces right now.'}
           </p>
 
           {setting.total_members !== undefined && (
-            <div style={{
-              display: 'flex', gap: 14, flexWrap: 'wrap',
-              marginTop: 10, fontSize: 12, color: 'var(--slate-700)',
-            }}>
-              <span>
-                <strong style={{ color: 'var(--success)' }}>{setting.enrolled_count}</strong>
-                {' '}of <strong>{setting.total_members}</strong> enrolled
-              </span>
-              {setting.eligible_not_enrolled > 0 && (
-                <span style={{ color: 'var(--slate-500)' }}>
-                  · <strong>{setting.eligible_not_enrolled}</strong> ready to enrol
+            <>
+              <div style={{
+                display: 'flex', gap: 16, flexWrap: 'wrap',
+                fontSize: 12, color: 'var(--slate-700)', marginBottom: 8,
+              }}>
+                <span>
+                  <strong style={{ color: 'var(--success)' }}>{setting.enrolled_count}</strong>
+                  {' '}of <strong>{setting.total_members}</strong> enrolled
                 </span>
-              )}
-            </div>
+                {setting.eligible_not_enrolled > 0 && (
+                  <span style={{ color: 'var(--slate-500)' }}>
+                    · <strong>{setting.eligible_not_enrolled}</strong> ready to enrol
+                  </span>
+                )}
+              </div>
+
+              <div style={{
+                height: 5, borderRadius: 3,
+                background: 'rgba(0,0,0,0.08)', overflow: 'hidden',
+                maxWidth: 280,
+              }}>
+                <div style={{
+                  height: '100%',
+                  width: `${enrolledPct}%`,
+                  background: 'var(--success)',
+                  borderRadius: 3,
+                  transition: 'width 600ms var(--ease)',
+                }} />
+              </div>
+            </>
           )}
 
           {setting.updated_at && setting.updated_by_name && (
             <p style={{
               fontSize: 11, color: 'var(--text-muted)',
-              margin: '8px 0 0', fontStyle: 'italic',
+              margin: '10px 0 0', fontStyle: 'italic',
             }}>
               Last changed {new Date(setting.updated_at).toLocaleString()} by {setting.updated_by_name}
             </p>
@@ -531,7 +842,7 @@ function FaceEnrollmentToggle() {
 }
 
 // ═════════════════════════════════════════════════════════════
-// Existing components (unchanged)
+// Stat card — 2-line layout with hover arrow
 // ═════════════════════════════════════════════════════════════
 function StatCard({ icon, label, value, href, accent, highlight }) {
   return (
@@ -539,25 +850,42 @@ function StatCard({ icon, label, value, href, accent, highlight }) {
       to={href}
       className={`card hover-lift${highlight ? ' highlight-pulse' : ''}`}
       style={{
-        textDecoration: 'none', color: 'inherit', padding: '14px 16px',
-        display: 'flex', alignItems: 'center', gap: 12,
+        textDecoration: 'none', color: 'inherit',
+        padding: '16px 18px',
+        display: 'grid', gap: 10,
         borderColor: highlight ? accent : 'var(--border)',
-        borderWidth: highlight ? 2 : 1, minWidth: 0,
+        borderWidth: highlight ? 2 : 1,
+        minWidth: 0,
+        position: 'relative',
       }}
     >
       <div style={{
-        fontSize: 20, width: 40, height: 40, borderRadius: 10,
-        background: `${accent}15`, display: 'grid', placeItems: 'center', flexShrink: 0,
-      }}>{icon}</div>
+        display: 'flex', justifyContent: 'space-between',
+        alignItems: 'flex-start', gap: 8,
+      }}>
+        <div style={{
+          fontSize: 20, width: 38, height: 38, borderRadius: 10,
+          background: `${accent}15`,
+          display: 'grid', placeItems: 'center', flexShrink: 0,
+        }}>{icon}</div>
+        <span style={{
+          color: 'var(--slate-400)', fontSize: 14,
+          opacity: 0.4, transition: 'opacity 140ms, transform 140ms',
+        }}>→</span>
+      </div>
       <div style={{ minWidth: 0 }}>
         <div style={{
-          fontSize: 22, fontWeight: 700, lineHeight: 1,
-          color: 'var(--text)', letterSpacing: '-0.02em',
+          fontSize: 26, fontWeight: 700, lineHeight: 1,
+          color: 'var(--text)', letterSpacing: '-0.03em',
           fontVariantNumeric: 'tabular-nums',
         }}>
           <CountUp value={value} />
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+        <div style={{
+          fontSize: 12, color: 'var(--text-muted)',
+          marginTop: 6, lineHeight: 1.3,
+          overflowWrap: 'anywhere',
+        }}>
           {label}
         </div>
       </div>
@@ -619,27 +947,6 @@ function ResourceCard({ resource, canManage }) {
           <span>v{resource.version}</span>
         </div>
       </div>
-    </Link>
-  );
-}
-
-function QuickLink({ to, icon, label }) {
-  return (
-    <Link to={to} style={{
-      display: 'flex', alignItems: 'center', gap: 10,
-      padding: '8px 10px', borderRadius: 'var(--radius-sm)',
-      textDecoration: 'none', color: 'var(--text)', fontSize: 13,
-      minWidth: 0,
-    }}>
-      <span style={{
-        width: 24, height: 24, borderRadius: 6,
-        background: 'var(--slate-100)', display: 'grid', placeItems: 'center',
-        fontSize: 12, flexShrink: 0,
-      }}>{icon}</span>
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
-        {label}
-      </span>
-      <span style={{ color: 'var(--slate-400)', fontSize: 12, flexShrink: 0 }}>→</span>
     </Link>
   );
 }
