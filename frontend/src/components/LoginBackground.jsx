@@ -1,103 +1,330 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-// ── Icon art (drawn inside a shared <svg> wrapper) ────────────
-const ICON_ART = [
-  // Closed book
+// ═══════════════════════════════════════════════════════════════
+// ICON ART — school + engineering themed, stroke-only.
+// ═══════════════════════════════════════════════════════════════
+const GEAR_PATH = (
   <>
-    <path d="M4 4h7a2 2 0 0 1 2 2v14" />
-    <path d="M20 4h-7a2 2 0 0 0-2 2v14" />
-    <path d="M4 4v16h7" />
-    <path d="M20 4v16h-7" />
-  </>,
-  // Open book
-  <>
-    <path d="M3 5a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v15" />
-    <path d="M21 5a2 2 0 0 0-2-2h-5a2 2 0 0 0-2 2v15" />
-    <path d="M3 5v13a2 2 0 0 0 2 2h5" />
-    <path d="M21 5v13a2 2 0 0 1-2 2h-5" />
-  </>,
-  // Pencil
-  <>
-    <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
-    <path d="m15 5 4 4" />
-  </>,
-  // Graduation cap
-  <>
-    <path d="M22 10 12 5 2 10l10 5 10-5z" />
-    <path d="M6 12v5c3 3 9 3 12 0v-5" />
-    <path d="M22 10v6" />
-  </>,
-  // Atom
-  <>
-    <circle cx="12" cy="12" r="1" />
-    <path d="M20.2 20.2c2.04-2.03.02-7.36-4.5-11.9-4.54-4.52-9.87-6.54-11.9-4.5-2.04 2.03-.02 7.36 4.5 11.9 4.54 4.52 9.87 6.54 11.9 4.5z" />
-    <path d="M15.7 15.7c4.52-4.54 6.54-9.87 4.5-11.9-2.03-2.04-7.36-.02-11.9 4.5-4.52 4.54-6.54 9.87-4.5 11.9 2.03 2.04 7.36.02 11.9-4.5z" />
-  </>,
-  // Flask
-  <>
-    <path d="M10 2v6.5L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8.5V2" />
-    <path d="M8.5 2h7" />
-    <path d="M7 16h10" />
-  </>,
-  // Ruler
-  <>
-    <path d="M21.3 8.7 15.3 2.7a1 1 0 0 0-1.4 0L2.7 13.9a1 1 0 0 0 0 1.4l6 6a1 1 0 0 0 1.4 0L21.3 10a1 1 0 0 0 0-1.3z" />
-    <path d="m7.5 10.5 2 2" />
-    <path d="m10.5 7.5 2 2" />
-    <path d="m13.5 4.5 2 2" />
-    <path d="m4.5 13.5 2 2" />
-  </>,
-  // Calculator
-  <>
-    <rect x="4" y="2" width="16" height="20" rx="2" />
-    <rect x="7" y="6" width="10" height="3" rx="1" />
-    <path d="M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01M16 17h.01" />
-  </>,
-  // Globe
-  <>
-    <circle cx="12" cy="12" r="10" />
-    <path d="M2 12h20" />
-    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-  </>,
-  // Lightbulb
-  <>
-    <path d="M9 18h6" />
-    <path d="M10 22h4" />
-    <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14" />
-  </>,
-  // Compass
-  <>
-    <circle cx="12" cy="12" r="10" />
-    <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
-  </>,
-  // Paper plane
-  <>
-    <path d="m22 2-7 20-4-9-9-4z" />
-    <path d="M22 2 11 13" />
-  </>,
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+  </>
+);
+
+const ICON_ART = {
+  book: (
+    <>
+      <path d="M4 4h7a2 2 0 0 1 2 2v14" />
+      <path d="M20 4h-7a2 2 0 0 0-2 2v14" />
+      <path d="M4 4v16h7" />
+      <path d="M20 4v16h-7" />
+    </>
+  ),
+  openBook: (
+    <>
+      <path d="M3 5a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v15" />
+      <path d="M21 5a2 2 0 0 0-2-2h-5a2 2 0 0 0-2 2v15" />
+      <path d="M3 5v13a2 2 0 0 0 2 2h5" />
+      <path d="M21 5v13a2 2 0 0 1-2 2h-5" />
+    </>
+  ),
+  pencil: (
+    <>
+      <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z" />
+      <path d="m15 5 4 4" />
+    </>
+  ),
+  gradCap: (
+    <>
+      <path d="M22 10 12 5 2 10l10 5 10-5z" />
+      <path d="M6 12v5c3 3 9 3 12 0v-5" />
+      <path d="M22 10v6" />
+    </>
+  ),
+  atom: (
+    <>
+      <circle cx="12" cy="12" r="1" />
+      <path d="M20.2 20.2c2.04-2.03.02-7.36-4.5-11.9-4.54-4.52-9.87-6.54-11.9-4.5-2.04 2.03-.02 7.36 4.5 11.9 4.54 4.52 9.87 6.54 11.9 4.5z" />
+      <path d="M15.7 15.7c4.52-4.54 6.54-9.87 4.5-11.9-2.03-2.04-7.36-.02-11.9 4.5-4.52 4.54-6.54 9.87-4.5 11.9 2.03 2.04 7.36.02 11.9-4.5z" />
+    </>
+  ),
+  flask: (
+    <>
+      <path d="M10 2v6.5L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8.5V2" />
+      <path d="M8.5 2h7" />
+      <path d="M7 16h10" />
+    </>
+  ),
+  ruler: (
+    <>
+      <path d="M21.3 8.7 15.3 2.7a1 1 0 0 0-1.4 0L2.7 13.9a1 1 0 0 0 0 1.4l6 6a1 1 0 0 0 1.4 0L21.3 10a1 1 0 0 0 0-1.3z" />
+      <path d="m7.5 10.5 2 2" />
+      <path d="m10.5 7.5 2 2" />
+      <path d="m13.5 4.5 2 2" />
+      <path d="m4.5 13.5 2 2" />
+    </>
+  ),
+  calc: (
+    <>
+      <rect x="4" y="2" width="16" height="20" rx="2" />
+      <rect x="7" y="6" width="10" height="3" rx="1" />
+      <path d="M8 13h.01M12 13h.01M16 13h.01M8 17h.01M12 17h.01M16 17h.01" />
+    </>
+  ),
+  globe: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M2 12h20" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </>
+  ),
+  bulb: (
+    <>
+      <path d="M9 18h6" />
+      <path d="M10 22h4" />
+      <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14" />
+    </>
+  ),
+  compass: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+    </>
+  ),
+  plane: (
+    <>
+      <path d="m22 2-7 20-4-9-9-4z" />
+      <path d="M22 2 11 13" />
+    </>
+  ),
+  chip: (
+    <>
+      <rect x="6" y="6" width="12" height="12" rx="2" />
+      <rect x="9" y="9" width="6" height="6" rx="1" />
+      <path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2" />
+    </>
+  ),
+  code: (
+    <>
+      <polyline points="16 18 22 12 16 6" />
+      <polyline points="8 6 2 12 8 18" />
+    </>
+  ),
+  gear: GEAR_PATH,
+  wifi: (
+    <>
+      <path d="M5 12.55a11 11 0 0 1 14.08 0" />
+      <path d="M1.42 9a16 16 0 0 1 21.16 0" />
+      <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
+      <line x1="12" y1="20" x2="12.01" y2="20" />
+    </>
+  ),
+};
+
+// ═══════════════════════════════════════════════════════════════
+// ICON TIERS
+// ═══════════════════════════════════════════════════════════════
+const BACK_TIER = [
+  { icon: 'code',     x: 8,  y: 18, size: 28, rot: -15, dur: 55, dx: 24, dy: 32 },
+  { icon: 'chip',     x: 92, y: 22, size: 26, rot: 22,  dur: 62, dx: 20, dy: 28 },
+  { icon: 'atom',     x: 12, y: 82, size: 30, rot: 8,   dur: 58, dx: 26, dy: 30 },
+  { icon: 'wifi',     x: 88, y: 78, size: 24, rot: -8,  dur: 65, dx: 22, dy: 26 },
+  { icon: 'gear',     x: 50, y: 4,  size: 26, rot: 18,  dur: 52, dx: 24, dy: 28 },
+  { icon: 'compass',  x: 50, y: 96, size: 28, rot: -20, dur: 60, dx: 20, dy: 30 },
 ];
 
-// ── Position layout (16 slots, deterministic jitter) ─────────
-const POSITIONS = [
-  { x: 4,  y: 12, size: 42, delay: 0,   dur: 26, rot: -12 },
-  { x: 14, y: 78, size: 58, delay: -6,  dur: 34, rot: 8 },
-  { x: 24, y: 28, size: 34, delay: -14, dur: 28, rot: 22 },
-  { x: 34, y: 88, size: 50, delay: -3,  dur: 36, rot: -8 },
-  { x: 44, y: 14, size: 46, delay: -20, dur: 30, rot: 12 },
-  { x: 54, y: 56, size: 38, delay: -8,  dur: 27, rot: -20 },
-  { x: 64, y: 22, size: 54, delay: -16, dur: 34, rot: 5 },
-  { x: 74, y: 72, size: 42, delay: -2,  dur: 29, rot: -12 },
-  { x: 84, y: 38, size: 50, delay: -10, dur: 25, rot: 18 },
-  { x: 94, y: 82, size: 36, delay: -18, dur: 32, rot: -5 },
-  { x: 9,  y: 48, size: 40, delay: -12, dur: 31, rot: 15 },
-  { x: 29, y: 62, size: 46, delay: -7,  dur: 24, rot: -22 },
-  { x: 49, y: 38, size: 44, delay: -15, dur: 38, rot: 0 },
-  { x: 69, y: 52, size: 32, delay: -1,  dur: 22, rot: 28 },
-  { x: 89, y: 18, size: 48, delay: -9,  dur: 36, rot: -10 },
-  { x: 59, y: 92, size: 42, delay: -4,  dur: 27, rot: 20 },
+const MID_TIER = [
+  { icon: 'book',     x: 4,  y: 40, size: 44, rot: -12, dur: 32, dx: 30, dy: 42 },
+  { icon: 'openBook', x: 96, y: 36, size: 52, rot: 10,  dur: 38, dx: 26, dy: 38 },
+  { icon: 'pencil',   x: 24, y: 24, size: 40, rot: 24,  dur: 28, dx: 34, dy: 30 },
+  { icon: 'gradCap',  x: 76, y: 68, size: 46, rot: -10, dur: 36, dx: 28, dy: 40 },
+  { icon: 'flask',    x: 34, y: 78, size: 42, rot: 14,  dur: 30, dx: 32, dy: 26 },
+  { icon: 'ruler',    x: 66, y: 14, size: 38, rot: -20, dur: 34, dx: 24, dy: 36 },
+  { icon: 'calc',     x: 10, y: 64, size: 44, rot: 18,  dur: 27, dx: 30, dy: 40 },
+  { icon: 'globe',    x: 90, y: 56, size: 48, rot: -6,  dur: 40, dx: 26, dy: 34 },
+  { icon: 'bulb',     x: 44, y: 44, size: 40, rot: 6,   dur: 33, dx: 28, dy: 30 },
+  { icon: 'plane',    x: 60, y: 88, size: 42, rot: 22,  dur: 37, dx: 30, dy: 26 },
 ];
 
-// ── CSS (inlined for zero extra asset requests) ──────────────
+const FRONT_TIER = [
+  { icon: 'chip',     x: 18, y: 12, size: 64, rot: -8,  dur: 22, dx: 36, dy: 44 },
+  { icon: 'openBook', x: 84, y: 24, size: 72, rot: 14,  dur: 26, dx: 32, dy: 38 },
+  { icon: 'gear',     x: 14, y: 72, size: 60, rot: 20,  dur: 24, dx: 30, dy: 42 },
+  { icon: 'atom',     x: 86, y: 84, size: 68, rot: -18, dur: 20, dx: 34, dy: 36 },
+];
+
+// ═══════════════════════════════════════════════════════════════
+// SCENE 1 — Orbiting atom (top-left)
+// Three concentric orbit groups rotating at different rates.
+// ═══════════════════════════════════════════════════════════════
+function AtomScene() {
+  return (
+    <svg
+      viewBox="0 0 200 200"
+      className="scene scene--atom"
+      aria-hidden="true"
+    >
+      <circle cx="100" cy="100" r="4" fill="rgba(167, 139, 250, 0.9)" />
+      <circle cx="100" cy="100" r="10" fill="rgba(167, 139, 250, 0.15)" />
+
+      <g transform="translate(100, 100)">
+        <g>
+          <animateTransform attributeName="transform" type="rotate"
+            from="0" to="360" dur="9s" repeatCount="indefinite" />
+          <ellipse cx="0" cy="0" rx="72" ry="26"
+            fill="none" stroke="rgba(167, 139, 250, 0.28)" strokeWidth="1" />
+          <circle cx="72" cy="0" r="3" fill="#c4b5fd" />
+        </g>
+      </g>
+
+      <g transform="translate(100, 100)">
+        <g>
+          <animateTransform attributeName="transform" type="rotate"
+            from="60" to="420" dur="12s" repeatCount="indefinite" />
+          <ellipse cx="0" cy="0" rx="72" ry="26"
+            fill="none" stroke="rgba(167, 139, 250, 0.28)" strokeWidth="1" />
+          <circle cx="72" cy="0" r="3" fill="#c4b5fd" />
+        </g>
+      </g>
+
+      <g transform="translate(100, 100)">
+        <g>
+          <animateTransform attributeName="transform" type="rotate"
+            from="-60" to="300" dur="15s" repeatCount="indefinite" />
+          <ellipse cx="0" cy="0" rx="72" ry="26"
+            fill="none" stroke="rgba(167, 139, 250, 0.28)" strokeWidth="1" />
+          <circle cx="72" cy="0" r="3" fill="#c4b5fd" />
+        </g>
+      </g>
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SCENE 2 — Interlocking gears (top-right)
+// Three gears turning in correct ratios for visual meshing.
+// ═══════════════════════════════════════════════════════════════
+function GearScene() {
+  return (
+    <svg
+      viewBox="0 0 300 300"
+      className="scene scene--gears"
+      aria-hidden="true"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="0.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {/* Main gear */}
+      <g transform="translate(150, 150)">
+        <g>
+          <animateTransform attributeName="transform" type="rotate"
+            from="0" to="360" dur="18s" repeatCount="indefinite" />
+          <g transform="scale(6) translate(-12, -12)">{GEAR_PATH}</g>
+        </g>
+      </g>
+
+      {/* Small top gear — counter-rotates so it "meshes" */}
+      <g transform="translate(232, 82)">
+        <g>
+          <animateTransform attributeName="transform" type="rotate"
+            from="0" to="-360" dur="9s" repeatCount="indefinite" />
+          <g transform="scale(3) translate(-12, -12)">{GEAR_PATH}</g>
+        </g>
+      </g>
+
+      {/* Small bottom-left gear */}
+      <g transform="translate(68, 228)">
+        <g>
+          <animateTransform attributeName="transform" type="rotate"
+            from="0" to="-360" dur="9s" repeatCount="indefinite" />
+          <g transform="scale(3) translate(-12, -12)">{GEAR_PATH}</g>
+        </g>
+      </g>
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SCENE 3 — Circuit board pulses (bottom-left)
+// PCB traces with glowing dots travelling along the paths.
+// ═══════════════════════════════════════════════════════════════
+function CircuitScene() {
+  const traces = [
+    { d: 'M20,20 H110 V90 H210',    dur: '4s', delay: '0s' },
+    { d: 'M20,140 H80 Q100,140 100,160 V240', dur: '5s', delay: '1.2s' },
+    { d: 'M250,30 V130 H180',       dur: '3.5s', delay: '0.6s' },
+  ];
+
+  return (
+    <svg
+      viewBox="0 0 280 280"
+      className="scene scene--circuit"
+      aria-hidden="true"
+      fill="none"
+    >
+      {traces.map((t, i) => (
+        <path
+          key={`trace-${i}`}
+          d={t.d}
+          stroke="rgba(56, 189, 248, 0.18)"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      ))}
+      {traces.map((t, i) => (
+        <path
+          key={`pulse-${i}`}
+          d={t.d}
+          stroke="#22d3ee"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeDasharray="14 600"
+          style={{
+            animation: `circuit-flow ${t.dur} linear ${t.delay} infinite`,
+            filter: 'drop-shadow(0 0 4px #22d3ee)',
+          }}
+        />
+      ))}
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SCENE 4 — Oscilloscope waveform (bottom-right)
+// Static wave with a glowing dot that traces along it.
+// ═══════════════════════════════════════════════════════════════
+function WaveScene() {
+  const wavePath = 'M0,60 Q50,20 100,60 T200,60 T300,60 T400,60';
+  return (
+    <svg
+      viewBox="0 0 400 120"
+      className="scene scene--wave"
+      aria-hidden="true"
+      preserveAspectRatio="none"
+    >
+      <path
+        d={wavePath}
+        fill="none"
+        stroke="rgba(34, 211, 238, 0.22)"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <circle r="4" fill="#22d3ee">
+        <animateMotion dur="4s" repeatCount="indefinite" path={wavePath} />
+      </circle>
+      <circle r="8" fill="rgba(34, 211, 238, 0.25)">
+        <animateMotion dur="4s" repeatCount="indefinite" path={wavePath} />
+      </circle>
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STYLES
+// ═══════════════════════════════════════════════════════════════
 const STYLES = `
   .login-bg {
     position: fixed;
@@ -105,58 +332,77 @@ const STYLES = `
     overflow: hidden;
     pointer-events: none;
     z-index: 0;
-    background: #0c1a3e;
+    background: #0a1428;
+    isolation: isolate;
   }
 
+  /* ── Layer 1: cycling gradient ───────────────────────────── */
   .login-bg__gradient {
     position: absolute;
     inset: 0;
     background: linear-gradient(
       -45deg,
-      #0c1a3e 0%,
+      #0a1428 0%,
       #1e3a8a 25%,
       #4f46e5 50%,
       #0891b2 75%,
-      #0c1a3e 100%
+      #0a1428 100%
     );
     background-size: 400% 400%;
-    animation: login-bg-gradient 26s ease infinite;
+    animation: login-bg-gradient 28s ease infinite;
   }
-
   @keyframes login-bg-gradient {
     0%, 100% { background-position: 0% 50%; }
     50% { background-position: 100% 50%; }
   }
 
+  /* ── Layer 2: aurora sheen ───────────────────────────────── */
+  .login-bg__sheen {
+    position: absolute;
+    inset: -50%;
+    background: conic-gradient(
+      from 0deg at 50% 50%,
+      rgba(139, 92, 246, 0.10),
+      transparent 25%,
+      rgba(6, 182, 212, 0.10) 55%,
+      transparent 80%,
+      rgba(139, 92, 246, 0.10) 100%
+    );
+    animation: login-bg-sheen 50s linear infinite;
+    mix-blend-mode: screen;
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  @keyframes login-bg-sheen { to { transform: rotate(360deg); } }
+
+  /* ── Layer 3: orbs ───────────────────────────────────────── */
   .login-bg__orb {
     position: absolute;
     border-radius: 50%;
     filter: blur(70px);
-    opacity: 0.55;
+    opacity: 0.5;
     will-change: transform;
   }
-
   .login-bg__orb--1 {
-    width: 60vmax; height: 60vmax;
-    top: -20vmax; left: -20vmax;
-    background: radial-gradient(circle, rgba(99,102,241,0.75), transparent 70%);
-    animation: login-bg-orb1 24s ease-in-out infinite;
+    width: 60vmax; height: 60vmax; top: -20vmax; left: -20vmax;
+    background: radial-gradient(circle, rgba(99, 102, 241, 0.75), transparent 70%);
+    animation: login-bg-orb1 26s ease-in-out infinite;
   }
-
   .login-bg__orb--2 {
-    width: 55vmax; height: 55vmax;
-    bottom: -20vmax; right: -15vmax;
-    background: radial-gradient(circle, rgba(6,182,212,0.65), transparent 70%);
-    animation: login-bg-orb2 30s ease-in-out infinite;
+    width: 55vmax; height: 55vmax; bottom: -20vmax; right: -15vmax;
+    background: radial-gradient(circle, rgba(6, 182, 212, 0.65), transparent 70%);
+    animation: login-bg-orb2 32s ease-in-out infinite;
   }
-
   .login-bg__orb--3 {
-    width: 40vmax; height: 40vmax;
-    top: 40%; left: 55%;
-    background: radial-gradient(circle, rgba(139,92,246,0.45), transparent 70%);
-    animation: login-bg-orb3 20s ease-in-out infinite;
+    width: 40vmax; height: 40vmax; top: 40%; left: 55%;
+    background: radial-gradient(circle, rgba(139, 92, 246, 0.45), transparent 70%);
+    animation: login-bg-orb3 22s ease-in-out infinite;
   }
-
+  .login-bg__orb--4 {
+    width: 45vmax; height: 45vmax; top: 30%; left: 15%;
+    background: radial-gradient(circle, rgba(56, 189, 248, 0.35), transparent 70%);
+    animation: login-bg-orb4 34s ease-in-out infinite;
+  }
   @keyframes login-bg-orb1 {
     0%, 100% { transform: translate(0, 0) scale(1); }
     50% { transform: translate(12vmax, 8vmax) scale(1.15); }
@@ -169,7 +415,12 @@ const STYLES = `
     0%, 100% { transform: translate(-50%, -50%) scale(1); }
     50% { transform: translate(-45%, -55%) scale(1.2); }
   }
+  @keyframes login-bg-orb4 {
+    0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.35; }
+    50% { transform: translate(6vmax, -4vmax) scale(1.08); opacity: 0.5; }
+  }
 
+  /* ── Layer 4: grid ───────────────────────────────────────── */
   .login-bg__grid {
     position: absolute;
     inset: 0;
@@ -179,45 +430,136 @@ const STYLES = `
     background-size: 64px 64px;
     -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
     mask-image: radial-gradient(ellipse at center, black 30%, transparent 80%);
-    opacity: 0.6;
+    opacity: 0.55;
   }
 
-  .login-bg__icons {
+  /* ── Layer 5: SCENES — 4 corners ─────────────────────────── */
+  .scene {
     position: absolute;
-    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    animation: scene-fade-in 1400ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
   }
+  @keyframes scene-fade-in { to { opacity: 1; } }
+
+  .scene--atom {
+    top: 3vh;
+    left: 3vw;
+    width: 220px;
+    height: 220px;
+    animation-delay: 400ms;
+  }
+
+  .scene--gears {
+    top: 3vh;
+    right: 3vw;
+    width: 240px;
+    height: 240px;
+    color: rgba(167, 139, 250, 0.45);
+    animation-delay: 550ms;
+  }
+
+  .scene--circuit {
+    bottom: 4vh;
+    left: 4vw;
+    width: 260px;
+    height: 260px;
+    animation-delay: 700ms;
+  }
+  @keyframes circuit-flow {
+    0% { stroke-dashoffset: 614; }
+    100% { stroke-dashoffset: 0; }
+  }
+
+  .scene--wave {
+    bottom: 6vh;
+    right: 4vw;
+    width: 340px;
+    height: 100px;
+    animation-delay: 850ms;
+  }
+
+  /* ── Layer 6: floating icons ─────────────────────────────── */
+  .login-bg__icons { position: absolute; inset: 0; }
 
   .login-bg__icon {
     position: absolute;
     color: #ffffff;
-    opacity: 0.10;
-    transform: translate(-50%, -50%) rotate(var(--rot, 0deg));
-    animation: login-bg-float var(--dur, 30s) ease-in-out infinite;
-    animation-delay: var(--delay, 0s);
+    animation: login-bg-float var(--dur, 30s) ease-in-out var(--float-delay, 0ms) infinite;
+    will-change: transform;
+  }
+
+  .login-bg__icon-inner {
+    width: 100%; height: 100%;
+    display: grid; place-items: center;
+    opacity: 0;
+    transform: scale(0.35) rotate(var(--rot, 0deg));
+    animation: login-bg-icon-in 1000ms cubic-bezier(0.2, 0.8, 0.2, 1) var(--delay, 0ms) forwards;
     will-change: transform, opacity;
   }
 
   .login-bg__icon svg {
-    width: 100%;
-    height: 100%;
-    display: block;
+    width: 100%; height: 100%; display: block;
+  }
+
+  /* Subtle inner spin for gear and atom icons */
+  .login-bg__icon[data-icon="gear"] svg,
+  .login-bg__icon[data-icon="atom"] svg {
+    animation: icon-spin 25s linear infinite;
+    transform-origin: 50% 50%;
+  }
+  @keyframes icon-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes login-bg-icon-in {
+    to {
+      opacity: var(--opacity, 0.10);
+      transform: scale(1) rotate(var(--rot, 0deg));
+    }
   }
 
   @keyframes login-bg-float {
-    0%, 100% {
-      transform: translate(-50%, -50%) rotate(var(--rot, 0deg));
-      opacity: 0.10;
-    }
+    0%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
     33% {
-      transform: translate(calc(-50% + 30px), calc(-50% - 45px)) rotate(calc(var(--rot, 0deg) + 12deg));
-      opacity: 0.18;
+      transform: translate(calc(-50% + var(--dx, 20px)), calc(-50% - var(--dy, 30px))) rotate(var(--spin, 3deg));
     }
     66% {
-      transform: translate(calc(-50% - 20px), calc(-50% - 25px)) rotate(calc(var(--rot, 0deg) - 8deg));
-      opacity: 0.08;
+      transform: translate(calc(-50% - var(--dx2, 15px)), calc(-50% - var(--dy2, 12px))) rotate(calc(var(--spin, 3deg) * -0.6));
     }
   }
 
+  /* ── Layer 7: mouse light ────────────────────────────────── */
+  .login-bg__mouse-light {
+    position: absolute;
+    top: 0; left: 0;
+    width: 700px; height: 700px;
+    border-radius: 50%;
+    background: radial-gradient(
+      circle,
+      rgba(139, 92, 246, 0.16) 0%,
+      rgba(139, 92, 246, 0.06) 30%,
+      transparent 60%
+    );
+    filter: blur(30px);
+    transform: translate(-50%, -50%);
+    transition: transform 500ms cubic-bezier(0.15, 0.8, 0.2, 1);
+    pointer-events: none;
+    mix-blend-mode: screen;
+  }
+
+  /* ── Layer 8: grain ──────────────────────────────────────── */
+  .login-bg__grain {
+    position: absolute;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity: 0.035;
+    mix-blend-mode: overlay;
+    pointer-events: none;
+  }
+
+  /* ── Layer 9: vignette ───────────────────────────────────── */
   .login-bg__vignette {
     position: absolute;
     inset: 0;
@@ -225,42 +567,140 @@ const STYLES = `
       ellipse at center,
       transparent 0%,
       transparent 35%,
-      rgba(0,0,0,0.45) 100%
+      rgba(0, 0, 0, 0.5) 100%
     );
     pointer-events: none;
   }
 
+  /* ── Mobile tuning ───────────────────────────────────────── */
   @media (max-width: 768px) {
-    .login-bg__orb { filter: blur(50px); opacity: 0.45; }
-    .login-bg__grid { background-size: 40px 40px; }
-    .login-bg__icon { opacity: 0.08; }
+    .login-bg__orb { filter: blur(50px); opacity: 0.42; }
+    .login-bg__grid { background-size: 40px 40px; opacity: 0.4; }
+    .login-bg__sheen { opacity: 0.35; }
+    .login-bg__mouse-light { display: none; }
+    .login-bg__icon svg { stroke-width: 1.6; }
+    .scene { display: none; }
   }
 
+  /* ── Reduced motion ──────────────────────────────────────── */
   @media (prefers-reduced-motion: reduce) {
     .login-bg__gradient,
+    .login-bg__sheen,
     .login-bg__orb,
-    .login-bg__icon {
+    .login-bg__icon,
+    .login-bg__icon[data-icon="gear"] svg,
+    .login-bg__icon[data-icon="atom"] svg {
       animation: none !important;
     }
     .login-bg__gradient { background-position: 50% 50%; }
+    .login-bg__sheen { display: none; }
+    .login-bg__icon-inner {
+      animation: none !important;
+      opacity: var(--opacity, 0.10);
+      transform: scale(1) rotate(var(--rot, 0deg));
+    }
+    .login-bg__mouse-light { transition: none; }
+    .scene { display: none; }
   }
 `;
 
+// ═══════════════════════════════════════════════════════════════
+// MOUSE LIGHT
+// ═══════════════════════════════════════════════════════════════
+function MouseLight() {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    function onMove(e) {
+      el.style.transform = `translate(${e.clientX - 350}px, ${e.clientY - 350}px)`;
+    }
+    window.addEventListener('pointermove', onMove, { passive: true });
+    return () => window.removeEventListener('pointermove', onMove);
+  }, []);
+  return <div ref={ref} className="login-bg__mouse-light" aria-hidden="true" />;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FLOATING ICON
+// ═══════════════════════════════════════════════════════════════
+function FloatingIcon({ spec, opacity, tierIndex, globalIndex }) {
+  const { x, y, size, rot, dur, dx, dy, icon } = spec;
+  const delay = globalIndex * 55 + tierIndex * 100;
+  const floatDelay = 900 + delay;
+
+  return (
+    <div
+      className="login-bg__icon"
+      data-icon={icon}
+      style={{
+        left: `${x}%`,
+        top: `${y}%`,
+        width: size,
+        height: size,
+        '--dur': `${dur}s`,
+        '--dx': `${dx}px`,
+        '--dy': `${dy}px`,
+        '--dx2': `${Math.round(dx * 0.7)}px`,
+        '--dy2': `${Math.round(dy * 0.5)}px`,
+        '--spin': `${rot > 0 ? 3 : -3}deg`,
+        '--float-delay': `${floatDelay}ms`,
+      }}
+    >
+      <div
+        className="login-bg__icon-inner"
+        style={{
+          '--opacity': opacity,
+          '--rot': `${rot}deg`,
+          '--delay': `${delay}ms`,
+        }}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          {ICON_ART[icon]}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN
+// ═══════════════════════════════════════════════════════════════
 export default function LoginBackground() {
-  // Delay icon rendering by one frame so the base gradient paints first
   const [mounted, setMounted] = useState(false);
+  const [hasFinePointer, setHasFinePointer] = useState(false);
+
   useEffect(() => {
     const id = requestAnimationFrame(() => setMounted(true));
-    return () => cancelAnimationFrame(id);
+    const mq = window.matchMedia('(pointer: fine)');
+    setHasFinePointer(mq.matches);
+    const onChange = (e) => setHasFinePointer(e.matches);
+    mq.addEventListener?.('change', onChange);
+    return () => {
+      cancelAnimationFrame(id);
+      mq.removeEventListener?.('change', onChange);
+    };
   }, []);
 
-  // Stable icon-to-position assignment
-  const icons = useMemo(
-    () =>
-      POSITIONS.map((pos, i) => ({
-        ...pos,
-        Art: ICON_ART[i % ICON_ART.length],
-      })),
+  const backWithIndex = useMemo(
+    () => BACK_TIER.map((spec, i) => ({ spec, tierIndex: 0, globalIndex: i })),
+    [],
+  );
+  const midWithIndex = useMemo(
+    () => MID_TIER.map((spec, i) => ({ spec, tierIndex: 1, globalIndex: BACK_TIER.length + i })),
+    [],
+  );
+  const frontWithIndex = useMemo(
+    () => FRONT_TIER.map((spec, i) => ({
+      spec, tierIndex: 2, globalIndex: BACK_TIER.length + MID_TIER.length + i,
+    })),
     [],
   );
 
@@ -269,43 +709,42 @@ export default function LoginBackground() {
       <style>{STYLES}</style>
 
       <div className="login-bg__gradient" />
+      <div className="login-bg__sheen" />
+
       <div className="login-bg__orb login-bg__orb--1" />
       <div className="login-bg__orb login-bg__orb--2" />
       <div className="login-bg__orb login-bg__orb--3" />
+      <div className="login-bg__orb login-bg__orb--4" />
+
       <div className="login-bg__grid" />
 
+      {/* ── Scenes ───────────────────────────────────────────── */}
+      <AtomScene />
+      <GearScene />
+      <CircuitScene />
+      <WaveScene />
+
+      {/* ── Icons ────────────────────────────────────────────── */}
       {mounted && (
         <div className="login-bg__icons">
-          {icons.map(({ x, y, size, delay, dur, rot, Art }, i) => (
-            <div
-              key={i}
-              className="login-bg__icon"
-              style={{
-                left: `${x}%`,
-                top: `${y}%`,
-                width: size,
-                height: size,
-                '--rot': `${rot}deg`,
-                '--dur': `${dur}s`,
-                '--delay': `${delay}s`,
-              }}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                {Art}
-              </svg>
-            </div>
+          {backWithIndex.map(({ spec, tierIndex, globalIndex }, i) => (
+            <FloatingIcon key={`back-${i}`} spec={spec} opacity={0.05}
+              tierIndex={tierIndex} globalIndex={globalIndex} />
+          ))}
+          {midWithIndex.map(({ spec, tierIndex, globalIndex }, i) => (
+            <FloatingIcon key={`mid-${i}`} spec={spec} opacity={0.10}
+              tierIndex={tierIndex} globalIndex={globalIndex} />
+          ))}
+          {frontWithIndex.map(({ spec, tierIndex, globalIndex }, i) => (
+            <FloatingIcon key={`front-${i}`} spec={spec} opacity={0.16}
+              tierIndex={tierIndex} globalIndex={globalIndex} />
           ))}
         </div>
       )}
 
+      {hasFinePointer && <MouseLight />}
+      <div className="login-bg__grain" />
       <div className="login-bg__vignette" />
     </div>
   );
-}
+} 
