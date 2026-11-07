@@ -22,10 +22,10 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.first_name or obj.username
 
     def get_avatar_url(self, obj):
-        # Relative path to the streaming view at /api/me/avatar/.
-        # The frontend appends ?token=... so MeAvatarView can read the
-        # file bytes from R2 on the server side and stream them back.
-        return '/me/avatar/' if obj.avatar else None
+        # Path MUST start with /api — the frontend's apiUrl() only prepends
+        # the backend origin, not the /api prefix. The streaming view is
+        # registered at /api/me/avatar/ (config/api.py → config/urls.py).
+        return '/api/me/avatar/' if obj.avatar else None
 
     def get_role(self, obj):
         from accounts.permissions import role_of
@@ -62,7 +62,6 @@ class MemberListSerializer(serializers.ModelSerializer):
     uploads_count = serializers.IntegerField(read_only=True)
     pending_count = serializers.IntegerField(read_only=True)
 
-    # ── Face enrollment ──────────────────────────────────────
     face_enrolled = serializers.SerializerMethodField()
     face_enrolled_at = serializers.DateTimeField(read_only=True)
 
@@ -84,8 +83,8 @@ class MemberListSerializer(serializers.ModelSerializer):
         return role_of(obj)
 
     def get_avatar_url(self, obj):
-        # Relative path to the per-member streaming view.
-        return f'/members/{obj.id}/avatar/' if obj.avatar else None
+        # Same — /api/members/{id}/avatar/ matches MemberAvatarView.
+        return f'/api/members/{obj.id}/avatar/' if obj.avatar else None
 
     def get_joined_at(self, obj):
         m = getattr(obj, 'membership', None)
