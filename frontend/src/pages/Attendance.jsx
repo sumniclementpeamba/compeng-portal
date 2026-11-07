@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { API_BASE, api, apiUrl, getToken } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { PageHeader, StatCard, EmptyState } from '../components/PageUI';
 import { computeFingerprint, getCurrentPosition } from '../utils/deviceFingerprint';
 import FaceCapture from '../components/FaceCapture';
+import { useAutoRefresh, AUTO_REFRESH_MS } from '../hooks/useAutoRefresh';
 
 
 const STATUS_META = {
@@ -15,14 +16,10 @@ const STATUS_META = {
 };
 
 
-// ═════════════════════════════════════════════════════════════
-// Modal keyframes (rendered once, injected into the page)
-// ═════════════════════════════════════════════════════════════
 const ModalStyles = () => (
   <style>{`
     @keyframes faceModalFadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
+      from { opacity: 0; } to { opacity: 1; }
     }
     @keyframes faceModalSlideDown {
       from { opacity: 0; transform: translateY(-16px); }
@@ -32,9 +29,6 @@ const ModalStyles = () => (
 );
 
 
-// ═════════════════════════════════════════════════════════════
-// Utilities
-// ═════════════════════════════════════════════════════════════
 function useNow(intervalMs = 1000) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -89,7 +83,7 @@ export default function Attendance() {
 
 
 // ═════════════════════════════════════════════════════════════
-// STUDENT VIEW — timetable-driven, no manual session creation
+// STUDENT VIEW
 // ═════════════════════════════════════════════════════════════
 function StudentView({ isRep }) {
   const [data, setData] = useState(null);
@@ -105,7 +99,8 @@ function StudentView({ isRep }) {
 
   const now = useNow(1000);
 
-  async function refresh() {
+  const refresh = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const [d, sem, up] = await Promise.all([
         api.get('/attendance/me/'),
@@ -115,21 +110,16 @@ function StudentView({ isRep }) {
       setData(d);
       setSemester(sem);
       setUpcoming(up?.results || []);
+      setErr('');
     } catch (e) {
-      setErr(e.message);
+      if (!silent) setErr(e.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }
-
-  useEffect(() => {
-    refresh();
-    const id = setInterval(() => {
-      if (document.visibilityState === 'visible') refresh();
-    }, 20000);
-    return () => clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
+  useAutoRefresh(() => refresh({ silent: true }), AUTO_REFRESH_MS);
 
   async function submitCheckIn(session, photoBlob) {
     setCheckingInId(session.id);
@@ -166,7 +156,7 @@ function StudentView({ isRep }) {
         setFlash(res.status === 'late' ? 'Checked in — marked LATE.' : 'Checked in — marked present.');
       }
       setFaceModalSession(null);
-      await refresh();
+      await refresh({ silent: true });
     } catch (e) {
       if (e.status === 403 && e.data?.reason === 'outside_geofence') {
         setFaceModalSession(null);
@@ -263,7 +253,6 @@ function StudentView({ isRep }) {
         </div>
       )}
 
-      {/* Active check-in banners — sessions created automatically from timetable */}
       {activeCheckIns.length > 0 && (
         <div style={{ display: 'grid', gap: 10, marginBottom: 20 }}>
           {activeCheckIns.map((session) => {
@@ -322,7 +311,6 @@ function StudentView({ isRep }) {
         </div>
       )}
 
-      {/* Coming up — timetable-driven */}
       {upcoming.length > 0 && (
         <div className="card" style={{ padding: 20, marginBottom: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
@@ -461,27 +449,15 @@ function StudentView({ isRep }) {
         </>
       )}
 
-      {/* ═══════════════════════════════════════════════════
-          Check-in modal — portaled to document.body so
-          ancestor transforms can't move it out of the viewport
-      ═══════════════════════════════════════════════════ */}
       {faceModalSession && createPortal(
         <div
           style={{
-            position: 'fixed',
-            inset: 0,
+            position: 'fixed', inset: 0,
             background: 'rgba(15, 23, 42, 0.55)',
-            backdropFilter: 'blur(6px)',
-            WebkitBackdropFilter: 'blur(6px)',
-            zIndex: 9999,
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'flex-start',
-            paddingTop: 'max(6vh, 40px)',
-            paddingLeft: 16,
-            paddingRight: 16,
-            paddingBottom: 24,
-            overflowY: 'auto',
+            backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)',
+            zIndex: 9999, display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
+            paddingTop: 'max(6vh, 40px)', paddingLeft: 16, paddingRight: 16,
+            paddingBottom: 24, overflowY: 'auto',
             animation: 'faceModalFadeIn 200ms ease-out',
           }}
           onClick={(e) => {
@@ -493,31 +469,19 @@ function StudentView({ isRep }) {
         >
           <div
             style={{
-              background: '#fff',
-              borderRadius: 20,
-              width: '100%',
-              maxWidth: 420,
+              background: '#fff', borderRadius: 20, width: '100%', maxWidth: 420,
               padding: '20px 20px 22px',
-              boxShadow:
-                '0 24px 60px rgba(15,23,42,0.28), 0 8px 20px rgba(15,23,42,0.12)',
-              display: 'grid',
-              gap: 16,
+              boxShadow: '0 24px 60px rgba(15,23,42,0.28), 0 8px 20px rgba(15,23,42,0.12)',
+              display: 'grid', gap: 16,
               animation: 'faceModalSlideDown 280ms cubic-bezier(0.2, 0.8, 0.2, 1)',
             }}
           >
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 8,
-              paddingBottom: 4,
-            }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, paddingBottom: 4 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                 <div style={{
                   width: 36, height: 36, borderRadius: '50%',
                   background: 'linear-gradient(135deg, var(--brand) 0%, var(--brand-600, #1d4ed8) 100%)',
-                  display: 'grid', placeItems: 'center',
-                  fontSize: 18, flexShrink: 0,
+                  display: 'grid', placeItems: 'center', fontSize: 18, flexShrink: 0,
                 }}>
                   🧑
                 </div>
@@ -538,11 +502,9 @@ function StudentView({ isRep }) {
                   onClick={() => { setFaceModalSession(null); setErr(''); }}
                   style={{
                     width: 32, height: 32, borderRadius: 8,
-                    background: 'var(--slate-100)',
-                    border: 'none', cursor: 'pointer',
+                    background: 'var(--slate-100)', border: 'none', cursor: 'pointer',
                     display: 'grid', placeItems: 'center',
-                    fontSize: 14, color: 'var(--slate-600)',
-                    flexShrink: 0,
+                    fontSize: 14, color: 'var(--slate-600)', flexShrink: 0,
                   }}
                   aria-label="Close"
                 >
@@ -560,8 +522,7 @@ function StudentView({ isRep }) {
               <div style={{
                 fontSize: 13, color: 'var(--slate-700)',
                 display: 'flex', alignItems: 'center', gap: 8,
-                padding: '10px 12px', background: 'var(--slate-50)',
-                borderRadius: 10,
+                padding: '10px 12px', background: 'var(--slate-50)', borderRadius: 10,
               }}>
                 <span className="spinner spinner-dark" style={{ width: 14, height: 14, borderWidth: 2 }} />
                 {checkInProgress}
@@ -605,17 +566,21 @@ function RepPendingReviews({ onReviewed }) {
   const [reviewingId, setReviewingId] = useState(null);
   const [err, setErr] = useState('');
 
-  useEffect(() => { load(); }, []);
-
-  async function load() {
+  const load = useCallback(async ({ silent = false } = {}) => {
     try {
       const d = await api.get('/attendance/sessions/');
       const withFlagged = (d.results || []).filter(
         (s) => (s.needs_review_count || 0) > 0 && !s.cancelled
       );
       setSessions(withFlagged);
-    } catch (e) { setErr(e.message); }
-  }
+      if (!silent) setErr('');
+    } catch (e) {
+      if (!silent) setErr(e.message);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+  useAutoRefresh(() => load({ silent: true }), AUTO_REFRESH_MS);
 
   async function expand(sessionId) {
     if (expandedId === sessionId) { setExpandedId(null); return; }
@@ -641,7 +606,7 @@ function RepPendingReviews({ onReviewed }) {
           .map((r) => (r.id === recordId ? { ...r, ...updated } : r))
           .filter((r) => r.needs_review),
       }));
-      await load();
+      await load({ silent: true });
       onReviewed?.();
     } catch (e) { setErr(e.message); }
     finally { setReviewingId(null); }
@@ -862,7 +827,7 @@ function SemMini({ label, value, color }) {
 
 
 // ═════════════════════════════════════════════════════════════
-// NEW SESSION FORM — admin one-off fallback only
+// NEW SESSION FORM
 // ═════════════════════════════════════════════════════════════
 function NewSessionForm({ onCreated, onCancel }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -919,7 +884,7 @@ function NewSessionForm({ onCreated, onCancel }) {
 
 
 // ═════════════════════════════════════════════════════════════
-// ADMIN VIEW — unchanged; admin keeps manual session fallback
+// ADMIN VIEW
 // ═════════════════════════════════════════════════════════════
 function AdminView({ canCreateSessions }) {
   const [sessions, setSessions] = useState([]);
@@ -934,8 +899,8 @@ function AdminView({ canCreateSessions }) {
   const [flash, setFlash] = useState('');
   const now = useNow(1000);
 
-  async function load() {
-    setLoading(true); setErr('');
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) { setLoading(true); setErr(''); }
     try {
       const [s, me] = await Promise.all([
         api.get('/attendance/sessions/'),
@@ -943,18 +908,23 @@ function AdminView({ canCreateSessions }) {
       ]);
       setSessions(s.results || []);
       setMyData(me);
-    } catch (e) { setErr(e.message); }
-    finally { setLoading(false); }
-  }
+      if (silent) setErr('');
+    } catch (e) {
+      if (!silent) setErr(e.message);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
+  useAutoRefresh(() => load({ silent: true }), AUTO_REFRESH_MS);
 
   async function checkIn(sessionId) {
     setBusyCheckInId(sessionId); setErr(''); setFlash('');
     try {
       const res = await api.post(`/attendance/sessions/${sessionId}/self-check-in/`);
       setFlash(res.status === 'late' ? 'Checked in — marked LATE.' : res.needs_review ? 'Checked in — flagged for review.' : 'Checked in — marked present.');
-      await load();
+      await load({ silent: true });
     } catch (e) {
       if (e.status === 403 && e.data?.reason === 'outside_geofence') {
         setErr('You appear to be outside the classroom. Use the session editor below to mark yourself present manually.');
@@ -1003,7 +973,7 @@ function AdminView({ canCreateSessions }) {
 
       {showNewForm && (
         <NewSessionForm
-          onCreated={() => { setShowNewForm(false); setMsg('Session created.'); load(); }}
+          onCreated={() => { setShowNewForm(false); setMsg('Session created.'); load({ silent: true }); }}
           onCancel={() => setShowNewForm(false)}
         />
       )}
@@ -1061,7 +1031,7 @@ function AdminView({ canCreateSessions }) {
             <SessionCard key={s.id} session={s}
               isOpen={selectedId === s.id}
               onToggle={() => setSelectedId(selectedId === s.id ? null : s.id)}
-              onSaved={(m) => { setMsg(m); load(); }}
+              onSaved={(m) => { setMsg(m); load({ silent: true }); }}
               onError={(m) => setErr(m)} />
           ))}
         </div>
@@ -1142,12 +1112,21 @@ function SessionEditor({ sessionId, onSaved, onError }) {
   const [dirty, setDirty] = useState(false);
   const [reviewingId, setReviewingId] = useState(null);
 
-  useEffect(() => {
-    api.get(`/attendance/sessions/${sessionId}/`)
-      .then((d) => setRecords(d.records || []))
-      .catch((e) => onError(e.message))
-      .finally(() => setLoading(false));
-  }, [sessionId]);
+  const loadRecords = useCallback(async () => {
+    // Skip background refresh while the admin has unsaved edits
+    if (dirty) return;
+    try {
+      const d = await api.get(`/attendance/sessions/${sessionId}/`);
+      setRecords(d.records || []);
+    } catch (e) {
+      onError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionId, onError, dirty]);
+
+  useEffect(() => { loadRecords(); }, [loadRecords]);
+  useAutoRefresh(loadRecords, AUTO_REFRESH_MS);
 
   function setStatus(userId, newStatus) {
     setRecords((prev) => prev.map((r) => (r.user_id === userId ? { ...r, status: newStatus } : r)));

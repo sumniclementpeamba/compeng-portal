@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import FaceCapture from './FaceCapture';
+import { useAutoRefresh, AUTO_REFRESH_MS } from '../hooks/useAutoRefresh';
 
 const PROFILE_FIELD_LABELS = {
   name: 'Full name',
@@ -48,23 +49,27 @@ export default function FaceEnrollment() {
     if (capturedUrlRef.current) URL.revokeObjectURL(capturedUrlRef.current);
   }, []);
 
-  async function load() {
+  const load = useCallback(async ({ silent = false } = {}) => {
     try {
       const s = await api.get('/me/face/status/');
       setStatus(s);
+      if (!silent) setErr('');
     } catch (e) {
-      setErr(e.message);
+      if (!silent) setErr(e.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }
+  }, []);
 
-  // Re-fetch when the user's profile fields change (e.g., after saving
-  // a phone number in the Edit profile form above).
+  useEffect(() => { load(); }, [load]);
+
+  // Re-fetch when profile fields change (e.g. after saving phone/index)
   useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.first_name, user?.phone_number, user?.index_number]);
+    load({ silent: true });
+  }, [user?.first_name, user?.phone_number, user?.index_number, load]);
+
+  // Poll so admin toggles propagate without a page reload
+  useAutoRefresh(() => load({ silent: true }), AUTO_REFRESH_MS);
 
   function openModal() {
     setErr('');
@@ -117,7 +122,7 @@ export default function FaceEnrollment() {
 
       setModalStep('success');
       setTimeout(async () => {
-        await load();
+        await load({ silent: true });
         setModalOpen(false);
         setConsent(false);
         setMsg('Face enrolled — you can now check in with face verification.');
@@ -128,13 +133,9 @@ export default function FaceEnrollment() {
       let detail;
 
       if (reason === 'profile_incomplete') {
-        detail =
-          e?.data?.detail ||
-          'Complete your profile (name, phone, index number) before enrolling your face.';
+        detail = e?.data?.detail || 'Complete your profile (name, phone, index number) before enrolling your face.';
       } else if (reason === 'enrollment_closed') {
-        detail =
-          'Face enrollment is currently closed by the course admin. '
-          + 'They will open it when it is time to enrol.';
+        detail = 'Face enrollment is currently closed by the course admin. They will open it when it is time to enrol.';
       } else if (e?.status === 400 && e?.data?.reason === 'no_face') {
         detail = 'No face detected in the photo. Try better lighting and centre your face.';
       } else {
@@ -143,9 +144,8 @@ export default function FaceEnrollment() {
 
       setErr(detail);
       setModalStep('confirm');
-      // If either gate changed state server-side, refresh
       if (reason === 'profile_incomplete' || reason === 'enrollment_closed') {
-        load();
+        load({ silent: true });
       }
     } finally {
       setBusy(false);
@@ -158,7 +158,7 @@ export default function FaceEnrollment() {
     try {
       await api.post('/me/face/', {});
       setMsg('Face data removed.');
-      await load();
+      await load({ silent: true });
       setTimeout(() => setMsg(''), 4000);
     } catch (e) {
       setErr(e?.data?.detail || e?.message || 'Could not remove face data.');
@@ -188,7 +188,6 @@ export default function FaceEnrollment() {
       })
     : null;
 
-  // ── State selection ────────────────────────────────────────
   let stateKey, stateColor, stateBg, stateIcon, stateBadge, stateBadgeVariant;
   if (!profileComplete && !enrolled) {
     stateKey = 'profile_incomplete';
@@ -299,9 +298,7 @@ export default function FaceEnrollment() {
                 <div style={{ fontWeight: 700, marginBottom: 4, color: 'var(--danger)' }}>
                   Complete your profile first
                 </div>
-                <p style={{ margin: 0 }}>
-                  To enrol your face, please fill in the following in your profile:
-                </p>
+                <p style={{ margin: 0 }}>To enrol your face, please fill in the following in your profile:</p>
               </div>
               <ul style={{ margin: 0, paddingLeft: 18, display: 'grid', gap: 4 }}>
                 {profileMissing.map((f) => (

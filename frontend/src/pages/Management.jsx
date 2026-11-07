@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resourcesApi } from '../api/resources';
 import { api, apiUrl, getToken } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { PageHeader, StatCard, EmptyState } from '../components/PageUI';
+import { useAutoRefresh, AUTO_REFRESH_MS } from '../hooks/useAutoRefresh';
 
 
 const ACTION_META = {
@@ -120,19 +121,20 @@ function PendingPanel() {
   const [noteById, setNoteById] = useState({});
   const [busyId, setBusyId] = useState(null);
 
-  async function load() {
-    setErr('');
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setErr('');
     try {
       const d = await resourcesApi.list({ status: 'pending' });
       setPending(d.results || []);
     } catch (e) {
-      setErr(`Failed to load pending: ${e.message}`);
+      if (!silent) setErr(`Failed to load pending: ${e.message}`);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
+  useAutoRefresh(() => load({ silent: true }), AUTO_REFRESH_MS);
 
   async function decide(id, decision) {
     setErr('');
@@ -149,8 +151,7 @@ function PendingPanel() {
           ? `Approved "${removed?.title}" — now visible to the class.`
           : `Rejected "${removed?.title}".`
       );
-      const d = await resourcesApi.list({ status: 'pending' });
-      setPending(d.results || []);
+      await load({ silent: true });
     } catch (e) {
       if (removed) setPending((list) => [removed, ...list]);
       setErr(`Could not ${decision}: ${e.message}`);
@@ -178,7 +179,7 @@ function PendingPanel() {
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <button onClick={load} disabled={loading} style={{ padding: '7px 14px', fontSize: 13 }}>
+        <button onClick={() => load()} disabled={loading} style={{ padding: '7px 14px', fontSize: 13 }}>
           ↻ Refresh
         </button>
       </div>
@@ -277,21 +278,21 @@ function AuditPanel() {
   const [err, setErr] = useState('');
   const [filter, setFilter] = useState('');
 
-  async function load() {
-    setLoading(true);
-    setErr('');
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) { setLoading(true); setErr(''); }
     try {
       const qs = filter ? `?action=${encodeURIComponent(filter)}` : '';
       const d = await api.get(`/audit-logs/${qs}`);
       setEntries(d.results || []);
     } catch (e) {
-      setErr(e.message);
+      if (!silent) setErr(e.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }
+  }, [filter]);
 
-  useEffect(() => { load(); }, [filter]);
+  useEffect(() => { load(); }, [load]);
+  useAutoRefresh(() => load({ silent: true }), AUTO_REFRESH_MS);
 
   const totals = entries.reduce((acc, e) => {
     acc[e.action] = (acc[e.action] || 0) + 1;
@@ -317,7 +318,7 @@ function AuditPanel() {
         <FilterChip active={filter === 'members.csv_imported'} onClick={() => setFilter('members.csv_imported')}>CSV imports</FilterChip>
         <FilterChip active={filter === 'members.exported'} onClick={() => setFilter('members.exported')}>Exports</FilterChip>
         <button
-          onClick={load}
+          onClick={() => load()}
           disabled={loading}
           style={{ marginLeft: 'auto', padding: '6px 14px', fontSize: 13 }}
         >
@@ -493,7 +494,7 @@ function MembersPanel() {
   const [q, setQ] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [completenessFilter, setCompletenessFilter] = useState('');
-  const [faceFilter, setFaceFilter] = useState('');       // ← NEW
+  const [faceFilter, setFaceFilter] = useState('');
   const [busyId, setBusyId] = useState(null);
   const [summary, setSummary] = useState(null);
 
@@ -503,14 +504,54 @@ function MembersPanel() {
   const [resetBusy, setResetBusy] = useState(false);
   const [downloading, setDownloading] = useState(null);
 
-  async function fetchSummary() {
+  // qRef holds the last SUBMITTED search term, so background refresh
+  // never fires a request based on half-typed input.
+  const qRef = useRef('');
+
+  const loadSummary = useCallback(async ({ silent = false } = {}) => {
     try {
       const d = await api.get('/members/summary/');
       setSummary(d);
     } catch {
       // silent — summary is a nice-to-have
     }
-  }
+  }, []);
+
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) { setLoading(true); setErr(''); }
+    try {
+      const params = new URLSearchParams();
+      if (qRef.current) params.set('q', qRef.current);
+      if (roleFilter) params.set('role', roleFilter);
+      if (faceFilter) params.set('face', faceFilter);
+      const qs = params.toString();
+      const d = await api.get(`/members/${qs ? '?' + qs : ''}`);
+      const list = Array.isArray(d) ? d : (d.results || []);
+      setMembers(list);
+    } catch (e) {
+      if (!silent) setErr(e.message);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, [roleFilter, faceFilter]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+
+  useAutoRefresh(async () => {
+    await Promise.all([
+      load({ silent: true }),
+      loadSummary({ silent: true }),
+    ]);
+  }, AUTO_REFRESH_MS);
+
+  // After CSV import, refresh both
+  useEffect(() => {
+    if (csvResult) {
+      load({ silent: true });
+      loadSummary({ silent: true });
+    }
+  }, [csvResult, load, loadSummary]);
 
   async function downloadMembers(format) {
     setDownloading(format);
@@ -543,34 +584,6 @@ function MembersPanel() {
     }
   }
 
-  async function load() {
-    setLoading(true);
-    setErr('');
-    try {
-      const params = new URLSearchParams();
-      if (q) params.set('q', q);
-      if (roleFilter) params.set('role', roleFilter);
-      if (faceFilter) params.set('face', faceFilter);     // ← NEW
-      const qs = params.toString();
-      const d = await api.get(`/members/${qs ? '?' + qs : ''}`);
-      const list = Array.isArray(d) ? d : (d.results || []);
-      setMembers(list);
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => { load(); }, [roleFilter, faceFilter]);
-  useEffect(() => { fetchSummary(); }, []);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-
-  // After CSV import, refresh summary too
-  useEffect(() => {
-    if (csvResult) fetchSummary();
-  }, [csvResult]);
-
   async function changeRole(member, newRole) {
     setErr('');
     setMsg('');
@@ -582,7 +595,7 @@ function MembersPanel() {
           ? `${member.display_name} is now a Course Rep.`
           : `${member.display_name} is now a Student.`
       );
-      await load();
+      await load({ silent: true });
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -603,7 +616,7 @@ function MembersPanel() {
       const r = await api.post('/members/import-csv/', fd);
       setCsvResult(r);
       setCsvFile(null);
-      await load();
+      await load({ silent: true });
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -642,8 +655,6 @@ function MembersPanel() {
     });
   }, [members, completenessFilter]);
 
-  // Counts for the completeness chips — from the summary (global) when available,
-  // otherwise fall back to the current members array
   const completeCount = summary?.complete ?? members.filter((m) => memberCompletion(m).complete).length;
   const incompleteCount = summary?.incomplete ?? (members.length - completeCount);
 
@@ -775,7 +786,6 @@ function MembersPanel() {
         <StatCard icon="🛡️" label="Admins" value={totals.admins} accent="var(--danger)" />
       </div>
 
-      {/* Profile completeness summary banner */}
       {summary && summary.total > 0 && (
         <div style={{
           padding: '14px 18px',
@@ -823,7 +833,6 @@ function MembersPanel() {
         </div>
       )}
 
-      {/* ── Face enrollment summary banner (NEW) ────────── */}
       {summary && summary.face_enrolled !== undefined && summary.total > 0 && (
         <div style={{
           padding: '12px 18px',
@@ -868,7 +877,11 @@ function MembersPanel() {
       )}
 
       <form
-        onSubmit={(e) => { e.preventDefault(); load(); }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          qRef.current = q;
+          load();
+        }}
         style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}
       >
         <input
@@ -920,7 +933,6 @@ function MembersPanel() {
         </FilterChip>
       </div>
 
-      {/* ── Face enrollment filter (NEW) ──────────────── */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
         <span style={{
           fontSize: 11,
@@ -1132,7 +1144,6 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
                 ⚠ {missingLabel}
               </span>
             )}
-            {/* Face enrollment badge (NEW) */}
             {member.face_enrolled ? (
               <span className="badge badge-success" style={{ fontSize: 10 }}>
                 🧑 Face ✓
@@ -1190,7 +1201,6 @@ function MemberCard({ member, currentUserId, canManageRoles, onChangeRole, busy 
             </span>
           </div>
         )}
-        {/* Face enrollment date (NEW) */}
         {member.face_enrolled && member.face_enrolled_at && (
           <div style={{
             display: 'flex', gap: 6, alignItems: 'center',

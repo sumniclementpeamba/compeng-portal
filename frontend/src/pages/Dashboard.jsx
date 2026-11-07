@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { announcementsApi, resourcesApi } from '../api/resources';
 import { useAuth } from '../context/AuthContext';
 import { listOffline } from '../offline/db';
+import { useAutoRefresh, AUTO_REFRESH_MS } from '../hooks/useAutoRefresh';
 
 const TYPE_ICONS = {
   note: '📝', slide: '📊', past_question: '📜',
@@ -51,29 +52,29 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const [a, r, o, tt] = await Promise.all([
-          announcementsApi.list(),
-          resourcesApi.list(),
-          listOffline().catch(() => []),
-          api.get('/attendance/timetable/').catch(() => ({ results: [] })),
-        ]);
-        if (cancelled) return;
-        setAnn(a.results || []);
-        setRecent(r.results || []);
-        setOfflineCount(o.length || 0);
-        setTimetable(tt.results || []);
-      } catch (e) {
-        if (!cancelled) setErr(e.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
+    try {
+      const [a, r, o, tt] = await Promise.all([
+        announcementsApi.list(),
+        resourcesApi.list(),
+        listOffline().catch(() => []),
+        api.get('/attendance/timetable/').catch(() => ({ results: [] })),
+      ]);
+      setAnn(a.results || []);
+      setRecent(r.results || []);
+      setOfflineCount(o.length || 0);
+      setTimetable(tt.results || []);
+      setErr('');
+    } catch (e) {
+      if (!silent) setErr(e.message);
+    } finally {
+      if (!silent) setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { load(); }, [load]);
+  useAutoRefresh(() => load({ silent: true }), AUTO_REFRESH_MS);
 
   if (loading) {
     return (
@@ -379,18 +380,18 @@ function FaceEnrollmentToggle() {
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const s = await api.get('/face-enrollment/setting/');
-        if (!cancelled) setSetting(s);
-      } catch (e) {
-        if (!cancelled) setErr(e.message);
-      }
-    })();
-    return () => { cancelled = true; };
+  const load = useCallback(async ({ silent = false } = {}) => {
+    try {
+      const s = await api.get('/face-enrollment/setting/');
+      setSetting(s);
+      if (!silent) setErr('');
+    } catch (e) {
+      if (!silent) setErr(e.message);
+    }
   }, []);
+
+  useEffect(() => { load(); }, [load]);
+  useAutoRefresh(() => load({ silent: true }), AUTO_REFRESH_MS);
 
   async function toggle() {
     if (!setting || busy) return;
@@ -463,7 +464,6 @@ function FaceEnrollmentToggle() {
               : 'Students cannot enrol their faces right now. Open this when you are ready for the class to enrol.'}
           </p>
 
-          {/* ── Enrollment counts (NEW) ─────────────────── */}
           {setting.total_members !== undefined && (
             <div style={{
               display: 'flex', gap: 14, flexWrap: 'wrap',

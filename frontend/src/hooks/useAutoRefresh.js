@@ -1,20 +1,21 @@
 import { useEffect, useRef } from 'react';
 
 /**
- * Polls `callback` every `intervalMs`, with safety rails:
- *   - Pauses when the tab is hidden (saves API calls)
- *   - Skips the tick if the previous call is still running (no overlap)
- *   - Silent on error (a failed poll does not surface an error to the user)
- *   - Cancels cleanly on unmount
+ * Periodically calls `callback` while:
+ *   - the tab is visible (unless pauseWhenHidden is false)
+ *   - the previous call has completed (inFlight guard)
+ *   - the component is still mounted
  *
- * Usage:
- *   useAutoRefresh(() => fetchData({ silent: true }), 5000);
+ * On tab return, fires immediately so state is fresh before the user
+ * interacts. Never throws — errors are swallowed so silent refreshes
+ * can't crash the page.
  */
 export function useAutoRefresh(callback, intervalMs = 5000, options = {}) {
   const { enabled = true, pauseWhenHidden = true } = options;
   const savedCallback = useRef(callback);
   const inFlight = useRef(false);
 
+  // Keep the latest callback without restarting the interval every render
   useEffect(() => {
     savedCallback.current = callback;
   }, [callback]);
@@ -33,7 +34,7 @@ export function useAutoRefresh(callback, intervalMs = 5000, options = {}) {
       try {
         await savedCallback.current();
       } catch {
-        // Silent — an individual poll failing should not disturb the UI
+        // Silent — background refresh failures should never surface
       } finally {
         inFlight.current = false;
       }
@@ -41,7 +42,6 @@ export function useAutoRefresh(callback, intervalMs = 5000, options = {}) {
 
     const timer = setInterval(tick, intervalMs);
 
-    // Immediately refresh when the tab becomes visible again
     function onVisibility() {
       if (document.visibilityState === 'visible') tick();
     }
@@ -55,5 +55,4 @@ export function useAutoRefresh(callback, intervalMs = 5000, options = {}) {
   }, [intervalMs, enabled, pauseWhenHidden]);
 }
 
-/** Interval in ms — change this ONE line to adjust the global poll rate */
-export const AUTO_REFRESH_MS = 5000;
+export const AUTO_REFRESH_MS = 5000; 
