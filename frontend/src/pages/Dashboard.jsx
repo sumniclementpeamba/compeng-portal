@@ -5,6 +5,7 @@ import { announcementsApi, resourcesApi } from '../api/resources';
 import { useAuth } from '../context/AuthContext';
 import { listOffline } from '../offline/db';
 import { useAutoRefresh, AUTO_REFRESH_MS } from '../hooks/useAutoRefresh';
+import DashboardBackground from '../components/DashboardBackground';
 
 const TYPE_ICONS = {
   note: '📝', slide: '📊', past_question: '📜',
@@ -123,9 +124,15 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div style={{ display: 'grid', placeItems: 'center', minHeight: '50vh' }}>
-        <span className="spinner spinner-dark" style={{ width: 32, height: 32, borderWidth: 3 }} />
-      </div>
+      <>
+        <DashboardBackground />
+        <div style={{
+          position: 'relative', zIndex: 1,
+          display: 'grid', placeItems: 'center', minHeight: '50vh',
+        }}>
+          <span className="spinner spinner-dark" style={{ width: 32, height: 32, borderWidth: 3 }} />
+        </div>
+      </>
     );
   }
 
@@ -213,386 +220,387 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="animate-fade-up" style={{ display: 'grid', gap: 24 }}>
-      {/* ── Header ───────────────────────────────────────── */}
-      <header style={{
-        display: 'flex', justifyContent: 'space-between',
-        alignItems: 'flex-end', flexWrap: 'wrap', gap: 16,
-      }}>
-        <div style={{ minWidth: 0, flex: '1 1 260px' }}>
-          <p style={{
-            fontSize: 12, fontWeight: 600, color: 'var(--text-muted)',
-            textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0,
-          }}>{today}</p>
-          <h1 style={{
-            fontSize: 30, marginTop: 6,
-            letterSpacing: '-0.025em', lineHeight: 1.15,
-            overflowWrap: 'anywhere',
-          }}>
-            {greeting()}, {firstName}
-          </h1>
-          <p style={{
-            color: 'var(--text-muted)', fontSize: 14, marginTop: 8,
-            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-          }}>
-            <span>{subtitle}</span>
-            {subtitleAction}
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Link to="/resources" className="hover-lift" style={{
-            padding: '9px 16px', borderRadius: 'var(--radius-sm)',
-            border: '1px solid var(--border-strong)',
-            background: '#fff', color: 'var(--text)',
-            fontSize: 14, fontWeight: 500, textDecoration: 'none',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}>🔍 Browse</Link>
-          <Link to="/upload" className="btn-primary hover-lift" style={{
-            padding: '9px 16px', borderRadius: 'var(--radius-sm)',
-            fontSize: 14, fontWeight: 500, textDecoration: 'none',
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}>＋ Upload</Link>
-        </div>
-      </header>
+    <>
+      <DashboardBackground />
 
-      {/* ── Quick actions row ────────────────────────────── */}
-      <div style={{
-        display: 'flex', gap: 8, flexWrap: 'wrap',
-        paddingBottom: 4,
-      }}>
-        <QuickChip to="/upload" icon="＋" label="Upload" />
-        <QuickChip to="/resources" icon="🔍" label="Search" />
-        <QuickChip to="/attendance" icon="✓" label="Attendance" />
-        <QuickChip to="/timetable" icon="📅" label="Timetable" />
-        <QuickChip to="/offline" icon="📥" label="Offline" />
-        {canManage && <QuickChip to="/manage" icon="⚙" label="Review queue" accent />}
-      </div>
-
-      {isAdmin && <FaceEnrollmentToggle />}
-
-      {err && (
-        <div style={{
-          padding: '10px 14px', background: 'var(--danger-bg)',
-          color: 'var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 14,
-        }}>{err}</div>
-      )}
-
-      {topPinned && (
-        <div style={{
-          padding: '14px 18px',
-          background: 'linear-gradient(90deg, #fef3c7 0%, #fef9e7 100%)',
-          border: '1px solid #fde68a', borderLeft: '4px solid #f59e0b',
-          borderRadius: 'var(--radius)',
-          display: 'flex', gap: 12, alignItems: 'flex-start', minWidth: 0,
-        }}>
-          <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>📌</span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{
-              fontWeight: 600, fontSize: 14, color: '#92400e',
-              overflowWrap: 'anywhere', wordBreak: 'break-word',
-            }}>{topPinned.title}</div>
-            <div style={{
-              fontSize: 13, color: '#a16207', marginTop: 4,
-              overflow: 'hidden', textOverflow: 'ellipsis',
-              display: '-webkit-box', WebkitLineClamp: 2,
-              WebkitBoxOrient: 'vertical',
-            }}>{topPinned.body}</div>
-          </div>
-          <Link to="/announcements" style={{
-            fontSize: 12, color: '#92400e',
-            fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
-          }}>View →</Link>
-        </div>
-      )}
-
-      {/* ── Stat cards ───────────────────────────────────── */}
-      <div className="dash-stats stagger">
-        <StatCard
-          icon="📚" label="Resources"
-          value={recent.length} href="/resources"
-          accent="var(--brand)"
-        />
-        <StatCard
-          icon="📣" label="Announcements"
-          value={ann.length} href="/announcements"
-          accent="#f59e0b"
-        />
-        <StatCard
-          icon="📥" label="Offline saved"
-          value={offlineCount} href="/offline"
-          accent="var(--success)"
-        />
-        {canManage && (
-          <StatCard
-            icon="⏳" label="Pending review"
-            value={pendingCount} href="/manage"
-            accent="var(--warning)"
-            highlight={pendingCount > 0}
-          />
-        )}
-      </div>
-
-      {/* ── Today's classes ──────────────────────────────── */}
-      <div className="card" style={{ padding: 20, minWidth: 0 }}>
-        <div style={{
+      <div
+        className="animate-fade-up"
+        style={{ position: 'relative', zIndex: 1, display: 'grid', gap: 24 }}
+      >
+        {/* ── Header ───────────────────────────────────────── */}
+        <header style={{
           display: 'flex', justifyContent: 'space-between',
-          alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8,
+          alignItems: 'flex-end', flexWrap: 'wrap', gap: 16,
         }}>
-          <h3 style={{
-            fontSize: 11, textTransform: 'uppercase',
-            letterSpacing: '0.08em', color: 'var(--text-muted)',
-            fontWeight: 600, margin: 0,
-          }}>Today's classes</h3>
-          <Link to="/timetable" style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap' }}>
-            {canManage ? 'Manage' : 'Full week'} →
-          </Link>
+          <div style={{ minWidth: 0, flex: '1 1 260px' }}>
+            <p style={{
+              fontSize: 12, fontWeight: 600, color: 'var(--text-muted)',
+              textTransform: 'uppercase', letterSpacing: '0.08em', margin: 0,
+            }}>{today}</p>
+            <h1 style={{
+              fontSize: 30, marginTop: 6,
+              letterSpacing: '-0.025em', lineHeight: 1.15,
+              overflowWrap: 'anywhere',
+            }}>
+              {greeting()}, {firstName}
+            </h1>
+            <p style={{
+              color: 'var(--text-muted)', fontSize: 14, marginTop: 8,
+              display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            }}>
+              <span>{subtitle}</span>
+              {subtitleAction}
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Link to="/resources" className="hover-lift" style={{
+              padding: '9px 16px', borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--border-strong)',
+              background: '#fff', color: 'var(--text)',
+              fontSize: 14, fontWeight: 500, textDecoration: 'none',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>🔍 Browse</Link>
+            <Link to="/upload" className="btn-primary hover-lift" style={{
+              padding: '9px 16px', borderRadius: 'var(--radius-sm)',
+              fontSize: 14, fontWeight: 500, textDecoration: 'none',
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+            }}>＋ Upload</Link>
+          </div>
+        </header>
+
+        {/* ── Quick actions row ────────────────────────────── */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingBottom: 4 }}>
+          <QuickChip to="/upload" icon="＋" label="Upload" />
+          <QuickChip to="/resources" icon="🔍" label="Search" />
+          <QuickChip to="/attendance" icon="✓" label="Attendance" />
+          <QuickChip to="/timetable" icon="📅" label="Timetable" />
+          <QuickChip to="/offline" icon="📥" label="Offline" />
+          {canManage && <QuickChip to="/manage" icon="⚙" label="Review queue" accent />}
         </div>
 
-        {todaysClasses.length === 0 ? (
+        {isAdmin && <FaceEnrollmentToggle />}
+
+        {err && (
           <div style={{
-            padding: '16px 0', fontSize: 13, color: 'var(--text-muted)',
-            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '10px 14px', background: 'var(--danger-bg)',
+            color: 'var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 14,
+          }}>{err}</div>
+        )}
+
+        {topPinned && (
+          <div style={{
+            padding: '14px 18px',
+            background: 'linear-gradient(90deg, #fef3c7 0%, #fef9e7 100%)',
+            border: '1px solid #fde68a', borderLeft: '4px solid #f59e0b',
+            borderRadius: 'var(--radius)',
+            display: 'flex', gap: 12, alignItems: 'flex-start', minWidth: 0,
           }}>
-            <span style={{ fontSize: 20 }}>{todayIdx === -1 || todayIdx > 4 ? '🌤' : '☕'}</span>
-            <span>
-              {todayIdx === -1 || todayIdx > 4
-                ? 'No classes today — enjoy the weekend.'
-                : 'No classes scheduled today. Take it easy.'}
-            </span>
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gap: 8 }}>
-            {todaysClasses.map((c) => {
-              const status = getCheckInStatus(c, now);
-              const isLive = status.status === 'open';
-              const isUpcoming = status.status === 'upcoming';
-              const isEnded = status.status === 'ended';
-              const mins = isLive
-                ? Math.max(1, Math.ceil(status.closesInMs / 60000))
-                : isUpcoming
-                ? Math.max(1, Math.ceil(status.inMs / 60000))
-                : 0;
-
-              return (
-                <div
-                  key={c.id}
-                  style={{
-                    display: 'flex', justifyContent: 'space-between',
-                    alignItems: 'center', gap: 12, padding: '12px 14px',
-                    background: isLive ? 'rgba(34,197,94,0.06)' : 'var(--slate-50)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: isLive ? '1px solid #bbf7d0' : '1px solid transparent',
-                    flexWrap: 'wrap', minWidth: 0,
-                    opacity: isEnded ? 0.65 : 1,
-                    transition: 'opacity 200ms, background 200ms',
-                  }}
-                >
-                  <div style={{ minWidth: 0, flex: '1 1 200px' }}>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
-                        {c.course_code}
-                      </span>
-                      {c.course_title && (
-                        <span style={{ fontSize: 12, color: 'var(--slate-600)' }}>
-                          {c.course_title}
-                        </span>
-                      )}
-                      {isLive && (
-                        <span className="badge badge-success" style={{
-                          fontSize: 9, display: 'inline-flex',
-                          alignItems: 'center', gap: 4,
-                        }}>
-                          <span style={{
-                            width: 5, height: 5, borderRadius: '50%',
-                            background: 'currentColor',
-                          }} />
-                          LIVE · {mins}m left
-                        </span>
-                      )}
-                      {isUpcoming && (
-                        <span className="badge badge-neutral" style={{ fontSize: 9 }}>
-                          in {mins}m
-                        </span>
-                      )}
-                      {isEnded && (
-                        <span className="badge badge-neutral" style={{ fontSize: 9 }}>
-                          ended
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
-                      {c.start_time} – {c.end_time}
-                      {c.room && ` · ${c.room}`}
-                    </div>
-                  </div>
-
-                  {isLive ? (
-                    <Link to="/attendance" style={{
-                      padding: '7px 14px', fontSize: 12, fontWeight: 700,
-                      borderRadius: 'var(--radius-pill)',
-                      background: 'var(--success)', color: '#fff',
-                      textDecoration: 'none', flexShrink: 0,
-                      boxShadow: '0 2px 8px rgba(34,197,94,0.3)',
-                    }}>Check in →</Link>
-                  ) : isUpcoming ? (
-                    <Link to="/attendance" style={{
-                      padding: '7px 14px', fontSize: 11, fontWeight: 500,
-                      borderRadius: 'var(--radius-pill)',
-                      border: '1px solid var(--border-strong)',
-                      background: '#fff', color: 'var(--slate-600)',
-                      textDecoration: 'none', flexShrink: 0,
-                    }}>View</Link>
-                  ) : null}
-                </div>
-              );
-            })}
+            <span style={{ fontSize: 20, lineHeight: 1, flexShrink: 0 }}>📌</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{
+                fontWeight: 600, fontSize: 14, color: '#92400e',
+                overflowWrap: 'anywhere', wordBreak: 'break-word',
+              }}>{topPinned.title}</div>
+              <div style={{
+                fontSize: 13, color: '#a16207', marginTop: 4,
+                overflow: 'hidden', textOverflow: 'ellipsis',
+                display: '-webkit-box', WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+              }}>{topPinned.body}</div>
+            </div>
+            <Link to="/announcements" style={{
+              fontSize: 12, color: '#92400e',
+              fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0,
+            }}>View →</Link>
           </div>
         )}
-      </div>
 
-      {/* ── Two-column layout ────────────────────────────── */}
-      <div className="dash-grid">
-        <div style={{ display: 'grid', gap: 24, minWidth: 0 }}>
-          <section style={{ minWidth: 0 }}>
-            <SectionHeader title="Recently added" action="View all" actionHref="/resources" />
-            {recent.length === 0 ? (
-              <EmptyState
-                icon="📚" title="No resources yet"
-                body="Be the first to contribute to the class library."
-                actionLabel="Upload a resource" actionHref="/upload"
-              />
-            ) : (
-              <div className="dash-recents stagger">
-                {recent.slice(0, 4).map((r) => (
-                  <ResourceCard key={r.id} resource={r} canManage={canManage} />
-                ))}
-              </div>
-            )}
-          </section>
-
-          {courses.length > 0 && (
-            <section style={{ minWidth: 0 }}>
-              <SectionHeader title="Browse by course" action="All resources" actionHref="/resources" />
-              <div className="dash-courses stagger">
-                {courses.slice(0, 8).map((c) => (
-                  <Link
-                    key={c.name}
-                    to={`/resources?course=${encodeURIComponent(c.name)}`}
-                    className="card hover-lift"
-                    style={{
-                      textDecoration: 'none', color: 'inherit',
-                      padding: '14px 16px',
-                      display: 'flex', alignItems: 'center',
-                      justifyContent: 'space-between', gap: 8, minWidth: 0,
-                    }}
-                  >
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{
-                        fontWeight: 700, fontSize: 14,
-                        letterSpacing: '-0.01em', color: 'var(--text)',
-                        overflow: 'hidden', textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap', maxWidth: '100%',
-                      }}>{c.name}</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                        {c.count} resource{c.count === 1 ? '' : 's'}
-                      </div>
-                    </div>
-                    <span style={{ color: 'var(--slate-400)', fontSize: 16, flexShrink: 0 }}>→</span>
-                  </Link>
-                ))}
-              </div>
-            </section>
+        {/* ── Stat cards ───────────────────────────────────── */}
+        <div className="dash-stats stagger">
+          <StatCard
+            icon="📚" label="Resources"
+            value={recent.length} href="/resources"
+            accent="var(--brand)"
+          />
+          <StatCard
+            icon="📣" label="Announcements"
+            value={ann.length} href="/announcements"
+            accent="#f59e0b"
+          />
+          <StatCard
+            icon="📥" label="Offline saved"
+            value={offlineCount} href="/offline"
+            accent="var(--success)"
+          />
+          {canManage && (
+            <StatCard
+              icon="⏳" label="Pending review"
+              value={pendingCount} href="/manage"
+              accent="var(--warning)"
+              highlight={pendingCount > 0}
+            />
           )}
         </div>
 
-        <aside style={{ display: 'grid', gap: 20, minWidth: 0, alignContent: 'start' }}>
-          <div className="card" style={{ padding: 16, minWidth: 0 }}>
+        {/* ── Today's classes ──────────────────────────────── */}
+        <div className="card" style={{ padding: 20, minWidth: 0 }}>
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8,
+          }}>
+            <h3 style={{
+              fontSize: 11, textTransform: 'uppercase',
+              letterSpacing: '0.08em', color: 'var(--text-muted)',
+              fontWeight: 600, margin: 0,
+            }}>Today's classes</h3>
+            <Link to="/timetable" style={{ fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap' }}>
+              {canManage ? 'Manage' : 'Full week'} →
+            </Link>
+          </div>
+
+          {todaysClasses.length === 0 ? (
             <div style={{
-              display: 'flex', justifyContent: 'space-between',
-              alignItems: 'baseline', marginBottom: 8, gap: 8,
+              padding: '16px 0', fontSize: 13, color: 'var(--text-muted)',
+              display: 'flex', alignItems: 'center', gap: 10,
             }}>
-              <h3 style={{
-                fontSize: 11, textTransform: 'uppercase',
-                letterSpacing: '0.08em', color: 'var(--text-muted)', minWidth: 0,
-              }}>Announcements</h3>
-              {ann.length > 0 && (
-                <Link to="/announcements" style={{ fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
-                  All →
-                </Link>
-              )}
+              <span style={{ fontSize: 20 }}>{todayIdx === -1 || todayIdx > 4 ? '🌤' : '☕'}</span>
+              <span>
+                {todayIdx === -1 || todayIdx > 4
+                  ? 'No classes today — enjoy the weekend.'
+                  : 'No classes scheduled today. Take it easy.'}
+              </span>
             </div>
+          ) : (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {todaysClasses.map((c) => {
+                const status = getCheckInStatus(c, now);
+                const isLive = status.status === 'open';
+                const isUpcoming = status.status === 'upcoming';
+                const isEnded = status.status === 'ended';
+                const mins = isLive
+                  ? Math.max(1, Math.ceil(status.closesInMs / 60000))
+                  : isUpcoming
+                  ? Math.max(1, Math.ceil(status.inMs / 60000))
+                  : 0;
 
-            {ann.length === 0 ? (
-              <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '12px 0 0' }}>
-                No announcements yet.
-              </p>
-            ) : (
-              <>
-                {/* Pinned section (max 2, excluding the topPinned already shown in banner) */}
-                {pinned.length > 1 && (
-                  <>
-                    <div style={{
-                      fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-                      letterSpacing: '0.06em', color: '#92400e',
-                      marginBottom: 4, marginTop: 4,
-                    }}>
-                      📌 Pinned
+                return (
+                  <div
+                    key={c.id}
+                    style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      alignItems: 'center', gap: 12, padding: '12px 14px',
+                      background: isLive ? 'rgba(34,197,94,0.06)' : 'var(--slate-50)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: isLive ? '1px solid #bbf7d0' : '1px solid transparent',
+                      flexWrap: 'wrap', minWidth: 0,
+                      opacity: isEnded ? 0.65 : 1,
+                      transition: 'opacity 200ms, background 200ms',
+                    }}
+                  >
+                    <div style={{ minWidth: 0, flex: '1 1 200px' }}>
+                      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono)' }}>
+                          {c.course_code}
+                        </span>
+                        {c.course_title && (
+                          <span style={{ fontSize: 12, color: 'var(--slate-600)' }}>
+                            {c.course_title}
+                          </span>
+                        )}
+                        {isLive && (
+                          <span className="badge badge-success" style={{
+                            fontSize: 9, display: 'inline-flex',
+                            alignItems: 'center', gap: 4,
+                          }}>
+                            <span style={{
+                              width: 5, height: 5, borderRadius: '50%',
+                              background: 'currentColor',
+                            }} />
+                            LIVE · {mins}m left
+                          </span>
+                        )}
+                        {isUpcoming && (
+                          <span className="badge badge-neutral" style={{ fontSize: 9 }}>
+                            in {mins}m
+                          </span>
+                        )}
+                        {isEnded && (
+                          <span className="badge badge-neutral" style={{ fontSize: 9 }}>
+                            ended
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 3 }}>
+                        {c.start_time} – {c.end_time}
+                        {c.room && ` · ${c.room}`}
+                      </div>
                     </div>
-                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                      {pinned.slice(1, 3).map((a) => (
-                        <li key={a.id} style={{ minWidth: 0 }}>
-                          <AnnouncementItem announcement={a} pinned />
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                )}
 
-                {/* Recent unpinned */}
-                {unpinned.length > 0 && (
-                  <>
-                    {pinned.length > 0 && (
+                    {isLive ? (
+                      <Link to="/attendance" style={{
+                        padding: '7px 14px', fontSize: 12, fontWeight: 700,
+                        borderRadius: 'var(--radius-pill)',
+                        background: 'var(--success)', color: '#fff',
+                        textDecoration: 'none', flexShrink: 0,
+                        boxShadow: '0 2px 8px rgba(34,197,94,0.3)',
+                      }}>Check in →</Link>
+                    ) : isUpcoming ? (
+                      <Link to="/attendance" style={{
+                        padding: '7px 14px', fontSize: 11, fontWeight: 500,
+                        borderRadius: 'var(--radius-pill)',
+                        border: '1px solid var(--border-strong)',
+                        background: '#fff', color: 'var(--slate-600)',
+                        textDecoration: 'none', flexShrink: 0,
+                      }}>View</Link>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* ── Two-column layout ────────────────────────────── */}
+        <div className="dash-grid">
+          <div style={{ display: 'grid', gap: 24, minWidth: 0 }}>
+            <section style={{ minWidth: 0 }}>
+              <SectionHeader title="Recently added" action="View all" actionHref="/resources" />
+              {recent.length === 0 ? (
+                <EmptyState
+                  icon="📚" title="No resources yet"
+                  body="Be the first to contribute to the class library."
+                  actionLabel="Upload a resource" actionHref="/upload"
+                />
+              ) : (
+                <div className="dash-recents stagger">
+                  {recent.slice(0, 4).map((r) => (
+                    <ResourceCard key={r.id} resource={r} canManage={canManage} />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {courses.length > 0 && (
+              <section style={{ minWidth: 0 }}>
+                <SectionHeader title="Browse by course" action="All resources" actionHref="/resources" />
+                <div className="dash-courses stagger">
+                  {courses.slice(0, 8).map((c) => (
+                    <Link
+                      key={c.name}
+                      to={`/resources?course=${encodeURIComponent(c.name)}`}
+                      className="card hover-lift"
+                      style={{
+                        textDecoration: 'none', color: 'inherit',
+                        padding: '14px 16px',
+                        display: 'flex', alignItems: 'center',
+                        justifyContent: 'space-between', gap: 8, minWidth: 0,
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{
+                          fontWeight: 700, fontSize: 14,
+                          letterSpacing: '-0.01em', color: 'var(--text)',
+                          overflow: 'hidden', textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap', maxWidth: '100%',
+                        }}>{c.name}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                          {c.count} resource{c.count === 1 ? '' : 's'}
+                        </div>
+                      </div>
+                      <span style={{ color: 'var(--slate-400)', fontSize: 16, flexShrink: 0 }}>→</span>
+                    </Link>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+
+          <aside style={{ display: 'grid', gap: 20, minWidth: 0, alignContent: 'start' }}>
+            <div className="card" style={{ padding: 16, minWidth: 0 }}>
+              <div style={{
+                display: 'flex', justifyContent: 'space-between',
+                alignItems: 'baseline', marginBottom: 8, gap: 8,
+              }}>
+                <h3 style={{
+                  fontSize: 11, textTransform: 'uppercase',
+                  letterSpacing: '0.08em', color: 'var(--text-muted)', minWidth: 0,
+                }}>Announcements</h3>
+                {ann.length > 0 && (
+                  <Link to="/announcements" style={{ fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
+                    All →
+                  </Link>
+                )}
+              </div>
+
+              {ann.length === 0 ? (
+                <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '12px 0 0' }}>
+                  No announcements yet.
+                </p>
+              ) : (
+                <>
+                  {pinned.length > 1 && (
+                    <>
                       <div style={{
                         fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
-                        letterSpacing: '0.06em', color: 'var(--text-muted)',
-                        marginBottom: 4, marginTop: 10,
+                        letterSpacing: '0.06em', color: '#92400e',
+                        marginBottom: 4, marginTop: 4,
                       }}>
-                        Recent
+                        📌 Pinned
                       </div>
-                    )}
+                      <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                        {pinned.slice(1, 3).map((a) => (
+                          <li key={a.id} style={{ minWidth: 0 }}>
+                            <AnnouncementItem announcement={a} pinned />
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+
+                  {unpinned.length > 0 && (
+                    <>
+                      {pinned.length > 0 && (
+                        <div style={{
+                          fontSize: 10, fontWeight: 700, textTransform: 'uppercase',
+                          letterSpacing: '0.06em', color: 'var(--text-muted)',
+                          marginBottom: 4, marginTop: 10,
+                        }}>
+                          Recent
+                        </div>
+                      )}
+                      <ul className="dash-ann-list stagger" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                        {unpinned.slice(0, 4).map((a) => (
+                          <li key={a.id} style={{ minWidth: 0 }}>
+                            <AnnouncementItem announcement={a} />
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+
+                  {unpinned.length === 0 && pinned.length <= 1 && (
                     <ul className="dash-ann-list stagger" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                      {unpinned.slice(0, 4).map((a) => (
+                      {ann.slice(0, 4).map((a) => (
                         <li key={a.id} style={{ minWidth: 0 }}>
                           <AnnouncementItem announcement={a} />
                         </li>
                       ))}
                     </ul>
-                  </>
-                )}
+                  )}
+                </>
+              )}
+            </div>
+          </aside>
+        </div>
 
-                {/* If everything was pinned, still show the rest */}
-                {unpinned.length === 0 && pinned.length <= 1 && (
-                  <ul className="dash-ann-list stagger" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                    {ann.slice(0, 4).map((a) => (
-                      <li key={a.id} style={{ minWidth: 0 }}>
-                        <AnnouncementItem announcement={a} />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </>
-            )}
-          </div>
-        </aside>
+        <style>{`
+          @keyframes dashPulse {
+            0%, 100% { transform: scale(1); }
+            50%      { transform: scale(1.25); }
+          }
+        `}</style>
       </div>
-
-      <style>{`
-        @keyframes dashPulse {
-          0%, 100% { transform: scale(1); }
-          50%      { transform: scale(1.25); }
-        }
-      `}</style>
-    </div>
+    </>
   );
 }
 
