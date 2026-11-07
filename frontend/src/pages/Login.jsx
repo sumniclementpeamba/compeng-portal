@@ -3,6 +3,7 @@ import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import LoginBackground from '../components/LoginBackground';
 import AnimatedTitle from '../components/AnimatedTitle';
+import AnimatedFooter from '../components/AnimatedFooter';
 
 const LABEL = { fontSize: 13, fontWeight: 500, color: 'var(--slate-700)', display: 'block' };
 const FIELD = { width: '100%', marginTop: 4 };
@@ -322,24 +323,7 @@ export default function Login() {
         </form>
 
         {/* ── Footer ─────────────────────────────────────── */}
-        <footer
-          style={{
-            textAlign: 'center',
-            fontSize: 12,
-            color: 'rgba(203, 213, 225, 0.75)',
-            letterSpacing: '0.02em',
-            lineHeight: 1.6,
-            paddingBottom: 8,
-            textShadow: '0 1px 2px rgba(0, 0, 0, 0.4)',
-          }}
-        >
-          <div style={{ fontWeight: 500 }}>
-            © {COPYRIGHT_YEAR} — Developed by{' '}
-            <span style={{ color: 'rgba(255,255,255,0.95)', fontWeight: 600 }}>
-              {CREATOR_NAME}
-            </span>
-          </div>
-        </footer>
+        <AnimatedFooter year={COPYRIGHT_YEAR} name={CREATOR_NAME} />
       </div>
     </div>
   );
