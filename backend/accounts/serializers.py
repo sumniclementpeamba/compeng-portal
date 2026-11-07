@@ -22,12 +22,17 @@ class UserSerializer(serializers.ModelSerializer):
         return obj.first_name or obj.username
 
     def get_avatar_url(self, obj):
-        # Relative path to the streaming view at /api/me/avatar/.
-        # The frontend does apiUrl(avatar_url) + ?token=... to fetch bytes,
-        # which respects R2 storage and validates the token server-side.
+        # Use the model's `avatar_url` property if it exists — that's what
+        # produces the correct R2 URL. Falls back to obj.avatar.url only
+        # when the model has no property.
+        if hasattr(obj, 'avatar_url'):
+            return obj.avatar_url
         if not obj.avatar:
             return None
-        return '/me/avatar/'
+        try:
+            return obj.avatar.url
+        except (ValueError, AttributeError):
+            return None
 
     def get_role(self, obj):
         from accounts.permissions import role_of
@@ -86,11 +91,14 @@ class MemberListSerializer(serializers.ModelSerializer):
         return role_of(obj)
 
     def get_avatar_url(self, obj):
-        # Relative path to the per-member streaming view.
-        # Frontend does apiUrl(avatar_url) + ?token=...
+        if hasattr(obj, 'avatar_url'):
+            return obj.avatar_url
         if not obj.avatar:
             return None
-        return f'/members/{obj.id}/avatar/'
+        try:
+            return obj.avatar.url
+        except (ValueError, AttributeError):
+            return None
 
     def get_joined_at(self, obj):
         m = getattr(obj, 'membership', None)
