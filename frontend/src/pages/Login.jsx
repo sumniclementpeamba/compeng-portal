@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import LoginBackground from '../components/LoginBackground';
+import AnimatedTitle from '../components/AnimatedTitle';
 
 const LABEL = { fontSize: 13, fontWeight: 500, color: 'var(--slate-700)', display: 'block' };
 const FIELD = { width: '100%', marginTop: 4 };
@@ -222,7 +223,7 @@ export default function Login() {
               👋 Welcome
             </p>
 
-            <h1 style={{ fontSize: 22 }}>CompEng Portal</h1>
+            <AnimatedTitle text="CompEng Portal" as="h1" fontSize={26} />
             {REP_CAPTION && (
               <p
                 style={{
