@@ -1197,3 +1197,72 @@ ul.stagger > li,
     transform: none !important;
   }
 }  
+
+/* ═══════════════════════════════════════════════════════════════
+   Hide scrollbars everywhere — scrolling still works.
+   Result: nav bar sits flush against the right edge, no
+   reserved scrollbar gutter, no visible scroll thumb.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Modern browsers (Firefox, Edge, Chrome 121+) */
+html,
+body,
+#root {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+/* WebKit (Chrome, Safari, Edge, all mobile browsers) */
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#root::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Any inner scroll container (modals, panels) */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ATTENDANCE PAGE — mobile safety net
+   Prevents letter-by-letter wrap, ensures action buttons fit,
+   and reduces card padding on narrow screens.
+   ═══════════════════════════════════════════════════════════════ */
+   @media (max-width: 640px) {
+    /* 1. Never break words letter-by-letter. Wrap at word
+          boundaries first; only break mid-word if unavoidable. */
+    h1, h2, h3, h4, p, div, span, dl, dt, dd {
+      word-break: normal !important;
+      overflow-wrap: break-word !important;
+    }
+  
+    /* 2. Attendance-style cards that stack their actions need
+          horizontal room — reduce side padding so text isn't
+          squeezed to 1–2 chars per line. */
+    .card {
+      padding: clamp(12px, 3.5vw, 18px) !important;
+    }
+  
+    /* 3. Buttons that had minWidth: 140 + text that had
+          minWidth: 200 need to actually fit. Unset minWidths
+          and let flex wrap do its job. */
+    .card button {
+      min-width: 0 !important;
+    }
+  
+    /* 4. Badges on the same line as long text cause the text
+          to compress. Push badges onto their own line on mobile. */
+    .card .badge {
+      flex-shrink: 0 !important;
+    }
+  }
