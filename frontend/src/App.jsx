@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react';
+import { ClassReminder } from './components/ClassReminder';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
 import { NotificationProvider } from './context/NotificationContext';
@@ -69,6 +70,7 @@ export default function App() {
           </Suspense>
 
           <ToastContainer />
+          <ClassReminder />
           <InstallPrompt />
         </BrowserRouter>
       </NotificationProvider>
