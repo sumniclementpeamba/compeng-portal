@@ -15,16 +15,16 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'username', 'reference_number', 'first_name', 'email',
             'phone_number', 'index_number', 'level', 'avatar',
             'avatar_url', 'role', 'is_class_rep', 'display_name',
+            'is_using_class_password',
         ]
-        read_only_fields = ['id', 'username', 'reference_number']
+        read_only_fields = [
+            'id', 'username', 'reference_number', 'is_using_class_password',
+        ]
 
     def get_display_name(self, obj):
         return obj.first_name or obj.username
 
     def get_avatar_url(self, obj):
-        # Path MUST start with /api — the frontend's apiUrl() only prepends
-        # the backend origin, not the /api prefix. The streaming view is
-        # registered at /api/me/avatar/ (config/api.py → config/urls.py).
         return '/api/me/avatar/' if obj.avatar else None
 
     def get_role(self, obj):
@@ -83,7 +83,6 @@ class MemberListSerializer(serializers.ModelSerializer):
         return role_of(obj)
 
     def get_avatar_url(self, obj):
-        # Same — /api/members/{id}/avatar/ matches MemberAvatarView.
         return f'/api/members/{obj.id}/avatar/' if obj.avatar else None
 
     def get_joined_at(self, obj):

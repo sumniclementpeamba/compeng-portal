@@ -1237,3 +1237,73 @@ class AttendanceRecordReviewView(APIView):
         )
 
         return Response(AttendanceRecordSerializer(record).data) 
+    
+# ─────────────────────────────────────────────────────────────
+# Upcoming sessions from timetable — informational only
+# ─────────────────────────────────────────────────────────────
+class UpcomingSessionsView(APIView):
+    """
+    Next N classes from the timetable, with computed check-in windows.
+    Does NOT create AttendanceSession rows — purely informational for
+    the 'Coming up' panel on /attendance.
+    """
+
+    def get(self, request):
+        from datetime import datetime as _dt, timedelta as _td
+        from django.utils import timezone as _tz
+
+        now = _tz.now()
+        tz = _tz.get_current_timezone()
+        try:
+            lookahead_days = min(int(request.query_params.get('days', 7)), 30)
+            limit = min(int(request.query_params.get('limit', 5)), 20)
+        except (TypeError, ValueError):
+            lookahead_days, limit = 7, 5
+
+        results = []
+        for day_offset in range(lookahead_days + 1):
+            if len(results) >= limit:
+                break
+            check_date = (now + _td(days=day_offset)).date()
+            day_of_week = check_date.weekday()
+
+            entries = TimetableEntry.objects.filter(
+                active=True, day_of_week=day_of_week
+            ).order_by('start_time')
+
+            for entry in entries:
+                if len(results) >= limit:
+                    break
+
+                class_start = _tz.make_aware(
+                    _dt.combine(check_date, entry.start_time), tz
+                )
+                class_end = _tz.make_aware(
+                    _dt.combine(check_date, entry.end_time), tz
+                )
+                opens_at = class_start - _td(
+                    minutes=entry.check_in_starts_minutes_before
+                )
+                closes_at = class_end + _td(
+                    minutes=entry.check_in_ends_minutes_after
+                )
+
+                if closes_at < now:
+                    continue
+
+                results.append({
+                    'timetable_entry_id': entry.id,
+                    'course_code': entry.course_code,
+                    'course_title': entry.course_title,
+                    'date': str(check_date),
+                    'start_time': entry.start_time.strftime('%H:%M'),
+                    'end_time': entry.end_time.strftime('%H:%M'),
+                    'room': getattr(entry, 'room', None),
+                    'check_in_opens_at': opens_at.isoformat(),
+                    'check_in_closes_at': closes_at.isoformat(),
+                    'opens_in_seconds': max(0, int((opens_at - now).total_seconds())),
+                    'closes_in_seconds': max(0, int((closes_at - now).total_seconds())),
+                    'is_open_now': opens_at <= now < closes_at,
+                })
+
+        return Response({'results': results})    

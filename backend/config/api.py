@@ -22,6 +22,7 @@ from accounts.views import (
     face_enroll,
     face_delete,
     FaceEnrollmentSettingView,
+    SetPasswordView,
 )
 from audit.views import AuditLogListView
 
@@ -38,13 +39,12 @@ urlpatterns = [
 
     path("me/", MeView.as_view(), name="me"),
     path("me/avatar/", MeAvatarView.as_view(), name="me-avatar"),
+    path("me/set-password/", SetPasswordView.as_view(), name="me-set-password"),
 
-    # Face verification
     path("me/face/status/", face_status, name="face-status"),
     path("me/face/enroll/", face_enroll, name="face-enroll"),
     path("me/face/",        face_delete, name="face-delete"),
 
-    # Face enrollment — system-wide toggle (admin)
     path("face-enrollment/setting/", FaceEnrollmentSettingView.as_view(), name="face-enrollment-setting"),
 
     path("notifications/", NotificationListView.as_view(), name="notifications"),
@@ -66,6 +66,4 @@ urlpatterns = [
     path("members/<int:user_id>/role/", MemberRoleUpdateView.as_view(), name="member-role"),
 
     path("attendance/", include("attendance.urls")),
-    # Face enrollment — system-wide toggle (admin)
-    path("face-enrollment/setting/", FaceEnrollmentSettingView.as_view(), name="face-enrollment-setting"),
 ] 

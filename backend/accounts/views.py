@@ -100,7 +100,7 @@ def _profile_completeness(user):
 
 
 # ─────────────────────────────────────────────────────────────
-# Register
+# Register — admin-only, manual account creation
 # ─────────────────────────────────────────────────────────────
 class RegisterView(APIView):
     permission_classes = [IsAdminRole]
@@ -118,7 +118,7 @@ class RegisterView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Login
+# Login — tries index number first, then reference, then legacy
 # ─────────────────────────────────────────────────────────────
 class LoginView(APIView):
     permission_classes = [AllowAny]
@@ -129,7 +129,7 @@ class LoginView(APIView):
 
         if not raw or not password:
             return Response(
-                {"detail": "Reference number and password are required."},
+                {"detail": "Index number or reference number and password are required."},
                 status=400,
             )
 
@@ -142,13 +142,18 @@ class LoginView(APIView):
                     seen_ids.add(u.pk)
                     candidates.append(u)
 
+        # Primary: index number — the new preferred login ID
+        add_candidates(User.objects.filter(index_number__iexact=raw)[:5])
+        # Legacy: reference number — works for first-time students
         add_candidates(User.objects.filter(reference_number__iexact=raw)[:5])
+        # Legacy: username
         add_candidates(User.objects.filter(username=raw)[:5])
 
         slug = slugify(raw)
         if slug and slug != raw:
             add_candidates(User.objects.filter(username=slug)[:5])
 
+        # Legacy: first name
         add_candidates(User.objects.filter(first_name__iexact=raw)[:5])
 
         for user in candidates:
@@ -168,13 +173,78 @@ class LoginView(APIView):
                 })
 
         return Response(
-            {"detail": "Invalid reference number or password."},
+            {"detail": "Invalid credentials."},
             status=400,
         )
 
 
 # ─────────────────────────────────────────────────────────────
-# Me
+# Set / change personal password — called from Profile
+#
+# Two modes:
+#   - First setup (is_using_class_password=True): only new_password needed
+#   - Change (is_using_class_password=False): current_password required too
+# ─────────────────────────────────────────────────────────────
+class SetPasswordView(APIView):
+    def post(self, request):
+        u = request.user
+        new_password = request.data.get('new_password') or ''
+        current_password = request.data.get('current_password') or ''
+
+        if len(new_password) < 8:
+            return Response(
+                {'detail': 'Password must be at least 8 characters.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not u.is_using_class_password:
+            if not u.check_password(current_password):
+                return Response(
+                    {'detail': 'Current password is incorrect.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if not (u.index_number or '').strip():
+            return Response(
+                {
+                    'detail': (
+                        'Add your index number to your profile first, then '
+                        'come back to set up your password.'
+                    ),
+                    'reason': 'no_index',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        lowered = new_password.lower()
+        if lowered in ('compeng-2026', 'password', '12345678', '123456789'):
+            return Response(
+                {'detail': 'Choose a stronger password than the class default.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        u.set_password(new_password)
+        u.is_using_class_password = False
+        u.save(update_fields=['password', 'is_using_class_password'])
+
+        # Rotate token so any other device on the same account is logged out
+        Token.objects.filter(user=u).delete()
+        token = Token.objects.create(user=u)
+
+        log(
+            request.user, 'account.password_set', u,
+            index_number=u.index_number,
+        )
+
+        return Response({
+            'ok': True,
+            'token': token.key,
+            'user': UserSerializer(u).data,
+        })
+
+
+# ─────────────────────────────────────────────────────────────
+# Me — get / patch own profile
 # ─────────────────────────────────────────────────────────────
 class MeView(APIView):
     parser_classes = (MultiPartParser, FormParser, JSONParser)
@@ -196,7 +266,7 @@ class MeView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Own avatar
+# Own avatar — GET (?token=) / DELETE
 # ─────────────────────────────────────────────────────────────
 class MeAvatarView(APIView):
     def get_permissions(self):
@@ -240,7 +310,7 @@ class MeAvatarView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Members — list
+# Members — list (no pagination; class roster is a fixed set)
 # ─────────────────────────────────────────────────────────────
 class MemberListView(generics.ListAPIView):
     serializer_class = MemberListSerializer
@@ -297,7 +367,6 @@ class MemberListView(generics.ListAPIView):
         if level:
             qs = qs.filter(level=level)
 
-        # Face enrollment filter
         face = p.get("face")
         if face == "enrolled":
             qs = qs.filter(face_embedding__isnull=False)
@@ -308,7 +377,7 @@ class MemberListView(generics.ListAPIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Member avatar
+# Any member's avatar — rep/admin only
 # ─────────────────────────────────────────────────────────────
 class MemberAvatarView(APIView):
     authentication_classes = []
@@ -347,7 +416,7 @@ class MemberAvatarView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Member role update
+# Change a member's role — admin only
 # ─────────────────────────────────────────────────────────────
 class MemberRoleUpdateView(APIView):
     permission_classes = [IsAdminRole]
@@ -386,6 +455,11 @@ class MemberRoleUpdateView(APIView):
         membership.role = new_role
         membership.save()
 
+        # New reps are exempt from the "set personal password" prompt
+        if new_role == 'rep':
+            target.is_using_class_password = False
+            target.save(update_fields=['is_using_class_password'])
+
         log(
             request.user,
             "member.role_changed",
@@ -404,7 +478,7 @@ class MemberRoleUpdateView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Member CSV import
+# CSV import of class roster — admin only
 # ─────────────────────────────────────────────────────────────
 class MemberCSVUploadView(APIView):
     permission_classes = [IsAdminRole]
@@ -439,7 +513,7 @@ class MemberCSVUploadView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Reset all passwords
+# Force-reset all non-admin passwords to the general password
 # ─────────────────────────────────────────────────────────────
 class ResetAllPasswordsView(APIView):
     permission_classes = [IsAdminRole]
@@ -451,7 +525,9 @@ class ResetAllPasswordsView(APIView):
         count = 0
         for user in users:
             user.set_password(password)
-            user.save(update_fields=["password"])
+            # Force everyone back through the setup flow on next login
+            user.is_using_class_password = True
+            user.save(update_fields=["password", "is_using_class_password"])
             count += 1
 
         log(request.user, "members.passwords_reset", count=count)
@@ -463,7 +539,7 @@ class ResetAllPasswordsView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Member export
+# Export all members — CSV or XLSX (admin only)
 # ─────────────────────────────────────────────────────────────
 class MemberExportView(APIView):
     permission_classes = [IsAdminRole]
@@ -490,7 +566,7 @@ class MemberExportView(APIView):
         response["Content-Disposition"] = (
             f'attachment; filename="members-{today}.csv"'
         )
-        response.write("\ufeff")
+        response.write("\ufeff")  # UTF-8 BOM so Excel opens cleanly
 
         writer = csv.writer(response)
         writer.writerow(headers)
@@ -550,7 +626,7 @@ class MemberExportView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Notifications
+# Notifications — REST
 # ─────────────────────────────────────────────────────────────
 class NotificationListView(generics.ListAPIView):
     serializer_class = NotificationSerializer
@@ -583,6 +659,9 @@ class NotificationMarkAllReadView(APIView):
         return Response({"ok": True})
 
 
+# ─────────────────────────────────────────────────────────────
+# Notifications — SSE stream
+# ─────────────────────────────────────────────────────────────
 @csrf_exempt
 def notification_stream(request):
     user = request.user if getattr(request.user, "is_authenticated", False) else None
@@ -635,7 +714,7 @@ def notification_stream(request):
 
 
 # ─────────────────────────────────────────────────────────────
-# Member summary — with face enrollment counts
+# Members summary — quick completeness counts (rep/admin)
 # ─────────────────────────────────────────────────────────────
 class MemberSummaryView(APIView):
     permission_classes = [CanReview]
@@ -786,7 +865,7 @@ def face_delete(request):
 
 
 # ─────────────────────────────────────────────────────────────
-# Face enrollment setting — with counts
+# Face enrollment setting — admin toggle
 # ─────────────────────────────────────────────────────────────
 class FaceEnrollmentSettingView(APIView):
     def get_permissions(self):

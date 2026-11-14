@@ -10,15 +10,11 @@ const FIELD = { width: '100%', marginTop: 4 };
 
 const PROFILE_IMG = '/images2.jpeg';
 const REP_CAPTION = 'Billy Boye Antwi · Course Rep';
-const REFERENCE_MAX_LEN = 9;
+const LOGIN_ID_MAX_LEN = 30;
 
-// Footer metadata
 const CREATOR_NAME = 'CLEMENT PEAMBA SUMNI';
 const COPYRIGHT_YEAR = new Date().getFullYear();
 
-// Routes that require rep/admin role. If a login redirect target is one
-// of these and the user doesn't have the role, we send them to the
-// dashboard instead of showing "Access denied".
 const PROTECTED_ROUTES = ['/manage'];
 
 function isProtectedPath(path) {
@@ -33,14 +29,11 @@ function safeRedirect(user, location) {
   if (!from) return '/';
   if (isProtectedPath(from)) {
     if (user?.role === 'rep' || user?.role === 'admin') return from;
-    // Student tried to reach a protected route — send to dashboard
     return '/';
   }
   return from;
 }
 
-// Keyframes for avatar glow and welcome pop (safety net in case they're
-// not in the global CSS)
 const PageKeyframes = () => (
   <style>{`
     @keyframes avatarGlow {
@@ -78,18 +71,12 @@ export default function Login() {
   const [imgFailed, setImgFailed] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // ── Loading state — background renders behind the spinner ──
   if (loading) {
     return (
-      <div
-        style={{
-          position: 'relative',
-          minHeight: '100vh',
-          display: 'grid',
-          placeItems: 'center',
-          overflow: 'hidden',
-        }}
-      >
+      <div style={{
+        position: 'relative', minHeight: '100vh',
+        display: 'grid', placeItems: 'center', overflow: 'hidden',
+      }}>
         <LoginBackground />
         <div style={{ position: 'relative', zIndex: 1 }}>
           <span className="spinner" style={{ width: 28, height: 28, borderWidth: 3 }} />
@@ -98,7 +85,6 @@ export default function Login() {
     );
   }
 
-  // Already logged in — smart redirect (never sends students to /manage)
   if (user) {
     return <Navigate to={safeRedirect(user, location)} replace />;
   }
@@ -120,34 +106,20 @@ export default function Login() {
   }
 
   return (
-    <div
-      style={{
-        position: 'relative',
-        minHeight: '100vh',
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 20,
-        gap: 20,
-      }}
-    >
+    <div style={{
+      position: 'relative', minHeight: '100vh', overflow: 'hidden',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      padding: 20, gap: 20,
+    }}>
       <LoginBackground />
       <PageKeyframes />
 
-      {/* ── Content layer (above the animated background) ─── */}
-      <div
-        style={{
-          position: 'relative',
-          zIndex: 1,
-          width: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 20,
-        }}
-      >
+      <div style={{
+        position: 'relative', zIndex: 1, width: '100%',
+        display: 'flex', flexDirection: 'column',
+        alignItems: 'center', gap: 20,
+      }}>
         <form
           onSubmit={submit}
           className="animate-fade-up"
@@ -169,12 +141,10 @@ export default function Login() {
           }}
         >
           <div style={{ textAlign: 'center', marginBottom: 4 }}>
-            {/* Avatar with soft pulsing glow */}
             <div
               className="login-avatar-glow"
               style={{
-                width: 84,
-                height: 84,
+                width: 84, height: 84,
                 margin: '0 auto 14px',
                 borderRadius: '50%',
                 overflow: 'hidden',
@@ -183,8 +153,7 @@ export default function Login() {
                   '0 8px 24px rgba(15,23,42,0.18), ' +
                   '0 0 0 3px rgba(59,130,246,0.35)',
                 background: 'var(--slate-100)',
-                display: 'grid',
-                placeItems: 'center',
+                display: 'grid', placeItems: 'center',
                 animation: 'avatarGlow 3s ease-in-out infinite',
               }}
             >
@@ -195,12 +164,7 @@ export default function Login() {
                   width={84}
                   height={84}
                   onError={() => setImgFailed(true)}
-                  style={{
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                    display: 'block',
-                  }}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                 />
               ) : (
                 <span style={{ fontSize: 28, fontWeight: 800, color: 'var(--brand)' }}>
@@ -209,16 +173,12 @@ export default function Login() {
               )}
             </div>
 
-            {/* Animated welcome tagline */}
             <p
               className="login-welcome-pop"
               style={{
-                fontSize: 11,
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.1em',
-                color: 'var(--brand)',
-                margin: '0 0 6px',
+                fontSize: 11, fontWeight: 700,
+                textTransform: 'uppercase', letterSpacing: '0.1em',
+                color: 'var(--brand)', margin: '0 0 6px',
                 animation:
                   'welcomePop 800ms cubic-bezier(0.34, 1.56, 0.64, 1) 200ms both',
               }}
@@ -226,36 +186,29 @@ export default function Login() {
               👋 Welcome
             </p>
 
-            {/* Animated title — cascade + gradient flow + glow */}
             <AnimatedTitle text="CompEng Portal" as="h1" fontSize={26} />
 
             {REP_CAPTION && (
-              <p
-                style={{
-                  fontSize: 12,
-                  color: 'var(--text-muted)',
-                  marginTop: 4,
-                  letterSpacing: '0.02em',
-                }}
-              >
-                {REP_CAPTION}
-              </p>
+              <p style={{
+                fontSize: 12, color: 'var(--text-muted)',
+                marginTop: 4, letterSpacing: '0.02em',
+              }}>{REP_CAPTION}</p>
             )}
             <p style={{ color: 'var(--text-muted)', fontSize: 14, marginTop: 10 }}>
-              Sign in with your admission reference number.
+              Sign in with your index number or reference number.
             </p>
           </div>
 
           <label style={LABEL}>
-            Reference number
+            Index or Reference number
             <input
               value={form.reference}
               onChange={set('reference')}
               required
-              maxLength={REFERENCE_MAX_LEN}
+              maxLength={LOGIN_ID_MAX_LEN}
               autoComplete="username"
               autoCapitalize="characters"
-              placeholder="e.g. UA2600133"
+              placeholder="e.g. UEB1109726 or UA2600133"
               style={{
                 ...FIELD,
                 fontFamily: 'var(--font-mono)',
@@ -263,20 +216,16 @@ export default function Login() {
                 textTransform: 'uppercase',
               }}
             />
-            <span
-              style={{
-                fontSize: 12,
-                color: 'var(--text-muted)',
-                display: 'block',
-                marginTop: 4,
-              }}
-            >
-              Not on the class list? Contact your course rep.
+            <span style={{
+              fontSize: 12, color: 'var(--text-muted)',
+              display: 'block', marginTop: 4,
+            }}>
+              New students: use your reference number the first time.
             </span>
           </label>
 
           <label style={LABEL}>
-            Class password
+            Password
             <div style={{ position: 'relative', marginTop: 4 }}>
               <input
                 type={showPassword ? 'text' : 'password'}
@@ -284,11 +233,8 @@ export default function Login() {
                 onChange={set('password')}
                 required
                 autoComplete="current-password"
-                placeholder="Shared class password"
-                style={{
-                  width: '100%',
-                  paddingRight: 48,
-                }}
+                placeholder="Your password"
+                style={{ width: '100%', paddingRight: 48 }}
               />
               <button
                 type="button"
@@ -296,58 +242,23 @@ export default function Login() {
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
                 title={showPassword ? 'Hide password' : 'Show password'}
                 style={{
-                  position: 'absolute',
-                  top: '50%',
-                  right: 8,
+                  position: 'absolute', top: '50%', right: 8,
                   transform: 'translateY(-50%)',
-                  width: 34,
-                  height: 34,
-                  borderRadius: 8,
-                  border: 'none',
-                  background: 'transparent',
+                  width: 34, height: 34, borderRadius: 8,
+                  border: 'none', background: 'transparent',
                   cursor: 'pointer',
-                  display: 'grid',
-                  placeItems: 'center',
-                  color: 'var(--slate-500)',
-                  padding: 0,
-                  transition: 'background 140ms ease, color 140ms ease',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'var(--slate-100)';
-                  e.currentTarget.style.color = 'var(--slate-700)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'transparent';
-                  e.currentTarget.style.color = 'var(--slate-500)';
+                  display: 'grid', placeItems: 'center',
+                  color: 'var(--slate-500)', padding: 0,
+                  transition: 'background 140ms, color 140ms',
                 }}
               >
                 {showPassword ? (
-                  // eye-off icon
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
                     <line x1="1" y1="1" x2="23" y2="23" />
                   </svg>
                 ) : (
-                  // eye icon
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                     <circle cx="12" cy="12" r="3" />
                   </svg>
@@ -357,19 +268,14 @@ export default function Login() {
           </label>
 
           {err && (
-            <div
-              role="alert"
-              style={{
-                padding: '10px 12px',
-                background: 'var(--danger-bg)',
-                color: 'var(--danger)',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: 13,
-                border: '1px solid #fecaca',
-              }}
-            >
-              {err}
-            </div>
+            <div role="alert" style={{
+              padding: '10px 12px',
+              background: 'var(--danger-bg)',
+              color: 'var(--danger)',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: 13,
+              border: '1px solid #fecaca',
+            }}>{err}</div>
           )}
 
           <button
@@ -381,20 +287,14 @@ export default function Login() {
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
 
-          <p
-            style={{
-              fontSize: 12,
-              color: 'var(--text-muted)',
-              textAlign: 'center',
-              marginTop: 4,
-              lineHeight: 1.5,
-            }}
-          >
-            Accounts are created by your course rep from the class list.
+          <p style={{
+            fontSize: 12, color: 'var(--text-muted)',
+            textAlign: 'center', marginTop: 4, lineHeight: 1.5,
+          }}>
+            First time? Use your reference number with the shared class password.
           </p>
         </form>
 
-        {/* ── Animated footer ─────────────────────────────────── */}
         <AnimatedFooter year={COPYRIGHT_YEAR} name={CREATOR_NAME} />
       </div>
     </div>

@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { api, apiUrl, getToken } from '../api/client';
 import { PageHeader, InfoCard } from '../components/PageUI';
 import FaceEnrollment from '../components/FaceEnrollment';
+import PasswordSetupModal from '../components/PasswordSetupModal';
 
 const LABEL = { fontSize: 13, fontWeight: 500, color: 'var(--slate-700)', display: 'block' };
 const FIELD = { width: '100%', marginTop: 4 };
@@ -224,10 +225,6 @@ const STYLES = `
     transform: translateY(-1px);
   }
 
-  .profile-skeleton {
-    animation: profile-card-in 400ms ease var(--delay, 0ms) both;
-  }
-
   @media (max-width: 640px) {
     .profile-field-row { padding: 12px 8px; gap: 12px; }
     .profile-icon-box { width: 32px; height: 32px; border-radius: 8px; }
@@ -266,6 +263,9 @@ export default function Profile() {
   const [err, setErr] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [pwdMsg, setPwdMsg] = useState('');
 
   if (!user) return null;
 
@@ -385,12 +385,7 @@ export default function Profile() {
             </button>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={cancelEdit}
-                disabled={busy}
-                style={{ padding: '9px 16px' }}
-              >
+              <button type="button" onClick={cancelEdit} disabled={busy} style={{ padding: '9px 16px' }}>
                 Cancel
               </button>
               <button
@@ -411,18 +406,28 @@ export default function Profile() {
         <div style={{
           padding: '12px 16px', background: 'var(--success-bg)', color: 'var(--success)',
           borderRadius: 10, fontSize: 13.5, marginBottom: 16,
-          border: '1px solid #bbf7d0',
-          display: 'flex', alignItems: 'center', gap: 10,
+          border: '1px solid #bbf7d0', display: 'flex', alignItems: 'center', gap: 10,
         }}>
           <Icon name="check" size={16} />
           <span>{msg}</span>
         </div>
       )}
+
+      {pwdMsg && !editing && (
+        <div style={{
+          padding: '12px 16px', background: 'var(--success-bg)', color: 'var(--success)',
+          borderRadius: 10, fontSize: 13.5, marginBottom: 16,
+          border: '1px solid #bbf7d0', display: 'flex', alignItems: 'center', gap: 10,
+        }}>
+          <Icon name="check" size={16} />
+          <span>{pwdMsg}</span>
+        </div>
+      )}
+
       {err && (
         <div role="alert" style={{
           padding: '12px 16px', background: 'var(--danger-bg)', color: 'var(--danger)',
-          borderRadius: 10, fontSize: 13.5, marginBottom: 16,
-          border: '1px solid #fecaca',
+          borderRadius: 10, fontSize: 13.5, marginBottom: 16, border: '1px solid #fecaca',
         }}>
           {err}
         </div>
@@ -489,6 +494,7 @@ export default function Profile() {
             <CredentialsCard
               user={user}
               onEdit={() => setEditing(true)}
+              onSetupPassword={() => setShowPasswordModal(true)}
               delay={100}
             />
             <div className="profile-card" style={{ '--delay': '180ms' }}>
@@ -516,13 +522,30 @@ export default function Profile() {
           </aside>
         </div>
       </div>
+
+      {showPasswordModal && (
+        <PasswordSetupModal
+          user={user}
+          open={showPasswordModal}
+          onClose={() => setShowPasswordModal(false)}
+          onSuccess={async () => {
+            await refresh();
+            setPwdMsg(
+              user.is_using_class_password
+                ? 'Password set — you can now log in with your index number.'
+                : 'Password changed successfully.'
+            );
+            setTimeout(() => setPwdMsg(''), 5000);
+          }}
+        />
+      )}
     </div>
   );
 }
 
 
 // ═════════════════════════════════════════════════════════════
-// HERO — animated gradient ring, completeness progress bar
+// HERO
 // ═════════════════════════════════════════════════════════════
 function ProfileHero({
   user, displayName, initials, roleLabel, roleBadge,
@@ -539,7 +562,6 @@ function ProfileHero({
         '--delay': '0ms',
       }}
     >
-      {/* Corner glow */}
       <div aria-hidden="true" style={{
         position: 'absolute', top: -80, right: -80,
         width: 240, height: 240, borderRadius: '50%',
@@ -554,33 +576,20 @@ function ProfileHero({
         flexWrap: 'wrap',
         position: 'relative',
       }}>
-        {/* Avatar with rotating gradient ring */}
         <div style={{ display: 'grid', gap: 12, justifyItems: 'center', flexShrink: 0 }}>
           <div style={{ position: 'relative', width: 116, height: 116 }}>
-            {/* Rotating gradient ring (behind) */}
             <div
               aria-hidden="true"
               className="profile-avatar-ring"
               style={{
-                position: 'absolute',
-                inset: 0,
+                position: 'absolute', inset: 0,
                 borderRadius: '50%',
                 background: 'conic-gradient(from 0deg, #3b82f6, #06b6d4, #8b5cf6, #3b82f6)',
                 boxShadow: '0 16px 40px rgba(37,99,235,0.20)',
               }}
             />
-            {/* White gap */}
-            <div style={{
-              position: 'absolute', inset: 4,
-              borderRadius: '50%',
-              background: '#fff',
-            }} />
-            {/* Avatar */}
-            <div style={{
-              position: 'absolute', inset: 6,
-              borderRadius: '50%',
-              overflow: 'hidden',
-            }}>
+            <div style={{ position: 'absolute', inset: 4, borderRadius: '50%', background: '#fff' }} />
+            <div style={{ position: 'absolute', inset: 6, borderRadius: '50%', overflow: 'hidden' }}>
               <AvatarDisplay
                 src={avatarSrc}
                 initials={initials}
@@ -593,7 +602,6 @@ function ProfileHero({
           {editingSlot}
         </div>
 
-        {/* Info */}
         <div style={{ flex: 1, minWidth: 220 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
             <h1 style={{
@@ -634,7 +642,6 @@ function ProfileHero({
             )}
           </div>
 
-          {/* Completeness — progress bar + state */}
           {profileComplete ? (
             <div style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,
@@ -737,9 +744,9 @@ function AvatarDisplay({ src, initials, size = 104, onImageError, imgFailed }) {
 
 
 // ═════════════════════════════════════════════════════════════
-// CREDENTIALS
+// CREDENTIALS (with new Login password section)
 // ═════════════════════════════════════════════════════════════
-function CredentialsCard({ user, onEdit, delay = 0 }) {
+function CredentialsCard({ user, onEdit, onSetupPassword, delay = 0 }) {
   const [copied, setCopied] = useState(false);
   function copyRef() {
     if (!user.reference_number) return;
@@ -773,7 +780,6 @@ function CredentialsCard({ user, onEdit, delay = 0 }) {
         Use your reference number with the class password to sign in from any device.
       </p>
 
-      {/* Reference band */}
       <div style={{
         padding: '16px 16px',
         background: '#fff',
@@ -818,7 +824,6 @@ function CredentialsCard({ user, onEdit, delay = 0 }) {
         </p>
       </div>
 
-      {/* Index + Phone — responsive 2-col that stacks under 420px */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
@@ -838,6 +843,98 @@ function CredentialsCard({ user, onEdit, delay = 0 }) {
           value={user.phone_number}
           onEdit={onEdit}
         />
+      </div>
+
+      {/* Login password section */}
+      <div style={{
+        marginTop: 16, paddingTop: 16,
+        borderTop: '1px solid var(--border)',
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          fontSize: 10, textTransform: 'uppercase',
+          letterSpacing: '0.06em', color: 'var(--text-muted)',
+          fontWeight: 600, marginBottom: 8,
+        }}>
+          <Icon name="key" size={11} />
+          <span>Login password</span>
+        </div>
+
+        {user.index_number ? (
+          <div style={{
+            display: 'flex', alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12, flexWrap: 'wrap',
+          }}>
+            <div style={{ flex: '1 1 200px', minWidth: 0 }}>
+              <div style={{
+                fontSize: 13, fontWeight: 600,
+                display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+              }}>
+                {user.is_using_class_password ? (
+                  <>
+                    <span className="badge badge-warning" style={{ fontSize: 10 }}>
+                      Class password
+                    </span>
+                    <span style={{ color: 'var(--slate-600)', fontWeight: 500 }}>
+                      Set a personal password
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="badge badge-success" style={{ fontSize: 10 }}>
+                      ✓ Personal
+                    </span>
+                    <span style={{ color: 'var(--slate-600)', fontWeight: 500 }}>
+                      Log in with {user.index_number}
+                    </span>
+                  </>
+                )}
+              </div>
+              <div style={{
+                fontSize: 11, color: 'var(--text-muted)',
+                marginTop: 4, lineHeight: 1.5,
+              }}>
+                {user.is_using_class_password
+                  ? 'Currently using the shared class password. Set your own to secure your account.'
+                  : 'You log in with your index number + personal password.'}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onSetupPassword}
+              className={user.is_using_class_password ? 'btn-primary' : ''}
+              style={{
+                padding: '8px 14px', fontSize: 13,
+                fontWeight: 600,
+                borderRadius: 'var(--radius-sm)',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+                ...(user.is_using_class_password ? {} : {
+                  background: '#fff',
+                  border: '1px solid var(--border-strong)',
+                  color: 'var(--slate-700)',
+                }),
+              }}
+            >
+              {user.is_using_class_password ? 'Set up password' : 'Change password'}
+            </button>
+          </div>
+        ) : (
+          <div style={{
+            padding: '10px 12px',
+            background: 'var(--warning-bg)',
+            border: '1px solid #fde68a',
+            borderRadius: 8,
+            fontSize: 12,
+            color: '#92400e',
+            lineHeight: 1.55,
+          }}>
+            <strong>Add your index number first.</strong> Then come back
+            to set up a personal password. Your index number becomes your
+            login ID.
+          </div>
+        )}
       </div>
 
       <div style={{
@@ -944,7 +1041,7 @@ function PersonalDetailsCard({ user, editing, form, setForm, onSubmit, busy, onE
             placeholder="e.g. UEB1109726"
           />
           <span style={{ fontSize: 12, color: 'var(--text-muted)', display: 'block', marginTop: 4 }}>
-            Your university index number. Leave blank if you don't have one yet.
+            Your university index number. Used as your login ID after you set a password.
           </span>
         </label>
 
@@ -1026,14 +1123,14 @@ function FieldRow({ icon, label, value, mono, hint, onEdit, last }) {
   return (
     <div
       className="profile-field-row"
-      style={{ borderBottom: last ? 'none' : '1px solid var(--border)', borderRadius: last ? '0 0 10px 10px' : '10px 10px 0 0' }}
+      style={{
+        borderBottom: last ? 'none' : '1px solid var(--border)',
+        borderRadius: last ? '0 0 10px 10px' : '10px 10px 0 0',
+      }}
     >
       <div
         className="profile-icon-box"
-        style={{
-          background: 'var(--slate-100)',
-          color: 'var(--slate-600)',
-        }}
+        style={{ background: 'var(--slate-100)', color: 'var(--slate-600)' }}
       >
         <Icon name={icon} size={16} />
       </div>

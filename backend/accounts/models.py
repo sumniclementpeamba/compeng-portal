@@ -25,7 +25,15 @@ class User(AbstractUser):
     face_consent_at = models.DateTimeField(null=True, blank=True)
     face_enrollment_photo = models.ImageField(
         upload_to='face/enroll/', null=True, blank=True,
-    )  # access-controlled — for rep/admin review only
+    ) 
+    is_using_class_password = models.BooleanField(
+        default=True,
+        help_text=(
+            "True while the user still logs in with the shared class password. "
+            "Cleared when the student sets a personal password from Profile. "
+            "Admins and reps are exempt via data migration."
+        ),
+    ) # access-controlled — for rep/admin review only
 
     
 
@@ -131,3 +139,4 @@ class FaceEnrollmentSetting(models.Model):
     def get_solo(cls):
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj    
+    
