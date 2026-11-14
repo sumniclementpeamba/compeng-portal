@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import { API_BASE, api, apiUrl, getToken } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { PageHeader, StatCard, EmptyState } from '../components/PageUI';
@@ -16,10 +17,14 @@ const STATUS_META = {
 };
 
 
+// ═════════════════════════════════════════════════════════════
+// Modal keyframes (rendered once, injected into the page)
+// ═════════════════════════════════════════════════════════════
 const ModalStyles = () => (
   <style>{`
     @keyframes faceModalFadeIn {
-      from { opacity: 0; } to { opacity: 1; }
+      from { opacity: 0; }
+      to { opacity: 1; }
     }
     @keyframes faceModalSlideDown {
       from { opacity: 0; transform: translateY(-16px); }
@@ -29,6 +34,9 @@ const ModalStyles = () => (
 );
 
 
+// ═════════════════════════════════════════════════════════════
+// Utilities
+// ═════════════════════════════════════════════════════════════
 function useNow(intervalMs = 1000) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -83,7 +91,7 @@ export default function Attendance() {
 
 
 // ═════════════════════════════════════════════════════════════
-// STUDENT VIEW
+// STUDENT VIEW — timetable-driven, no manual session creation
 // ═════════════════════════════════════════════════════════════
 function StudentView({ isRep }) {
   const [data, setData] = useState(null);
@@ -147,17 +155,50 @@ function StudentView({ isRep }) {
         `/attendance/sessions/${session.id}/self-check-in/`, fd
       );
 
+      // Success — check-in recorded.
       if (res.needs_review) {
         setFlash(
           `Checked in — but your record is flagged for rep review ` +
-          `(${(res.flags || []).join(', ')}). Contact your rep if this is wrong.`
+          `(${(res.review_flags || res.flags || []).join(', ')}). ` +
+          `Contact your rep if this is wrong.`
         );
       } else {
-        setFlash(res.status === 'late' ? 'Checked in — marked LATE.' : 'Checked in — marked present.');
+        setFlash(
+          res.status === 'late'
+            ? 'Checked in — marked LATE.'
+            : 'Checked in — marked present.'
+        );
       }
       setFaceModalSession(null);
       await refresh({ silent: true });
     } catch (e) {
+      // ── Hard gates (close modal, page-level error) ─────
+      if (e.status === 403 && e.data?.reason === 'face_not_enrolled') {
+        setFaceModalSession(null);
+        setErr(
+          e.data.detail ||
+          'You must enroll your face before checking in. Go to Profile → Face verification.'
+        );
+        // Refresh so the face-enrollment banner updates immediately
+        await refresh({ silent: true });
+        return;
+      }
+      if (e.status === 403 && e.data?.reason === 'no_gps') {
+        setFaceModalSession(null);
+        setErr(
+          e.data.detail ||
+          'This class requires location verification. Enable location services and try again.'
+        );
+        return;
+      }
+      if (e.status === 403 && e.data?.reason === 'duplicate_device') {
+        setFaceModalSession(null);
+        setErr(
+          'This device has already been used to check in another student ' +
+          'for this class. Contact your course rep if this is a mistake.'
+        );
+        return;
+      }
       if (e.status === 403 && e.data?.reason === 'outside_geofence') {
         setFaceModalSession(null);
         setRejection({
@@ -169,14 +210,7 @@ function StudentView({ isRep }) {
         });
         return;
       }
-      if (e.status === 403 && e.data?.reason === 'duplicate_device') {
-        setFaceModalSession(null);
-        setErr(
-          'This device has already been used to check in another student ' +
-          'for this class. Contact your course rep if this is a mistake.'
-        );
-        return;
-      }
+      // ── Retryable (keep modal open, show error, auto-restart) ──
       let msg;
       if (e.status === 403 && e.data?.reason === 'face_mismatch') {
         msg = e.data.detail ||
@@ -204,6 +238,7 @@ function StudentView({ isRep }) {
   const s = data?.summary || {};
   const records = data?.records || [];
   const activeCheckIns = data?.active_check_ins || [];
+  const userFaceEnrolled = data?.user_face_enrolled !== false;
 
   const pct = s.percentage || 0;
   const pctColor = pct >= 75 ? 'var(--success)' : pct >= 60 ? 'var(--warning)' : 'var(--danger)';
@@ -253,6 +288,7 @@ function StudentView({ isRep }) {
         </div>
       )}
 
+      {/* Active check-in banners */}
       {activeCheckIns.length > 0 && (
         <div style={{ display: 'grid', gap: 10, marginBottom: 20 }}>
           {activeCheckIns.map((session) => {
@@ -274,8 +310,14 @@ function StudentView({ isRep }) {
                 border: `1px solid ${urgent ? '#fecaca' : '#bbf7d0'}`,
                 borderLeft: `4px solid ${urgent ? 'var(--danger)' : 'var(--success)'}`,
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-                  <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'flex-start',
+                  gap: 12,
+                  flexWrap: 'wrap',
+                }}>
+                  <div style={{ flex: '1 1 220px', minWidth: 0 }}>
                     <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: urgent ? 'var(--danger)' : 'var(--success)', marginBottom: 4 }}>
                       🔔 Class is open for check-in
                     </div>
@@ -293,17 +335,48 @@ function StudentView({ isRep }) {
                       </div>
                     )}
                     <div style={{ fontSize: 11, color: 'var(--slate-600)', marginTop: 4 }}>
-                      📷 Face verification — auto-captures when you're in view
+                      📷 Face verification required
                     </div>
                   </div>
-                  <button
-                    onClick={() => setFaceModalSession(session)}
-                    disabled={isCheckingIn || remaining <= 0}
-                    className="btn-primary"
-                    style={{ padding: '12px 24px', fontSize: 15, fontWeight: 700, minWidth: 140 }}
-                  >
-                    I'm here ✓
-                  </button>
+
+                  {userFaceEnrolled ? (
+                    <button
+                      onClick={() => setFaceModalSession(session)}
+                      disabled={isCheckingIn || remaining <= 0}
+                      className="btn-primary"
+                      style={{ padding: '12px 24px', fontSize: 15, fontWeight: 700, minWidth: 140, flexShrink: 0 }}
+                    >
+                      I'm here ✓
+                    </button>
+                  ) : (
+                    <div style={{
+                      display: 'grid',
+                      gap: 6,
+                      flexShrink: 0,
+                      maxWidth: 220,
+                      textAlign: 'right',
+                    }}>
+                      <Link
+                        to="/profile"
+                        style={{
+                          padding: '12px 20px',
+                          fontSize: 14,
+                          fontWeight: 700,
+                          borderRadius: 'var(--radius-sm)',
+                          background: 'var(--warning)',
+                          color: '#fff',
+                          textDecoration: 'none',
+                          textAlign: 'center',
+                          boxShadow: '0 2px 8px rgba(245,158,11,0.3)',
+                        }}
+                      >
+                        Enroll face first →
+                      </Link>
+                      <span style={{ fontSize: 11, color: 'var(--slate-600)', lineHeight: 1.4 }}>
+                        Face verification is required to check in.
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -311,6 +384,7 @@ function StudentView({ isRep }) {
         </div>
       )}
 
+      {/* Coming up */}
       {upcoming.length > 0 && (
         <div className="card" style={{ padding: 20, marginBottom: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 12 }}>
@@ -422,7 +496,7 @@ function StudentView({ isRep }) {
                   alignItems: 'center', gap: 12, flexWrap: 'wrap',
                   borderLeft: isFlagged ? '3px solid var(--warning)' : undefined,
                 }}>
-                  <div style={{ minWidth: 0 }}>
+                  <div style={{ minWidth: 0, flex: '1 1 200px' }}>
                     <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       {r.session_title}
                       {isFlagged && <span className="badge badge-warning" style={{ fontSize: 10 }}>⚠ Review</span>}
@@ -449,6 +523,7 @@ function StudentView({ isRep }) {
         </>
       )}
 
+      {/* Check-in modal */}
       {faceModalSession && createPortal(
         <div
           style={{
@@ -827,7 +902,7 @@ function SemMini({ label, value, color }) {
 
 
 // ═════════════════════════════════════════════════════════════
-// NEW SESSION FORM
+// NEW SESSION FORM — admin one-off fallback only
 // ═════════════════════════════════════════════════════════════
 function NewSessionForm({ onCreated, onCancel }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -928,6 +1003,10 @@ function AdminView({ canCreateSessions }) {
     } catch (e) {
       if (e.status === 403 && e.data?.reason === 'outside_geofence') {
         setErr('You appear to be outside the classroom. Use the session editor below to mark yourself present manually.');
+      } else if (e.status === 403 && e.data?.reason === 'face_not_enrolled') {
+        setErr(e.data.detail || 'Enroll your face from Profile before checking in.');
+      } else if (e.status === 403 && e.data?.reason === 'no_gps') {
+        setErr(e.data.detail || 'Enable location services and try again.');
       } else { setErr(e.message); }
     } finally { setBusyCheckInId(null); }
   }
@@ -1113,7 +1192,7 @@ function SessionEditor({ sessionId, onSaved, onError }) {
   const [reviewingId, setReviewingId] = useState(null);
 
   const loadRecords = useCallback(async () => {
-    // Skip background refresh while the admin has unsaved edits
+    // Skip background refresh while the admin has unsaved edits.
     if (dirty) return;
     try {
       const d = await api.get(`/attendance/sessions/${sessionId}/`);

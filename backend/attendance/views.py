@@ -35,6 +35,26 @@ from .semester import (
 
 
 # ─────────────────────────────────────────────────────────────
+# Flag severity policy
+#
+# Only flags in this set push a check-in into the admin review
+# queue. Other flags (face_not_enrolled, no_gps, off_campus_network,
+# face_error, face_missing) are recorded informationally and do not
+# force a manual approval.
+#
+# Note: face_not_enrolled and no_gps are now HARD GATES — those
+# check-ins are rejected outright before this policy is consulted.
+# The flags remain in the set below only so pre-existing records
+# carrying them still display correctly in the admin UI.
+# ─────────────────────────────────────────────────────────────
+REVIEW_REQUIRED_FLAGS = {
+    'face_borderline',
+    'uncertain_geofence',
+    'low_accuracy',
+}
+
+
+# ─────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────
 def _is_frozen(session):
@@ -365,22 +385,29 @@ class AttendanceCloseCheckInView(APIView):
 
 
 # ─────────────────────────────────────────────────────────────
-# Self check-in — GPS + device fingerprint + FACE VERIFICATION
+# Self check-in — GPS + device fingerprint + face verification
 # ─────────────────────────────────────────────────────────────
 class AttendanceSelfCheckInView(APIView):
-    """Student self check-in with GPS + device fingerprint + face match.
+    """
+    Student self check-in with hard gates:
 
-    Accepts JSON or multipart. With multipart, `gps` is a JSON string.
+    1. Face enrollment REQUIRED. If user has no face_embedding,
+       reject with 403 face_not_enrolled. No flag-and-accept.
+    2. GPS REQUIRED when the class has require_location=True AND
+       classroom coordinates are set. If the device sends no GPS,
+       reject with 403 no_gps.
+    3. Face MISMATCH rejected with 403 face_mismatch.
+    4. Geofence OUTSIDE rejected with 403 outside_geofence.
 
-    Fields (all optional but affect flags):
-      - gps: {lat, lng, accuracy} or JSON string
-      - fingerprint: device hash
-      - photo: JPEG/PNG for face verification
+    Non-blocking (flagged, review-required):
+      - face_borderline     (weak face match, needs human decision)
+      - uncertain_geofence  (at the boundary of the geofence)
+      - low_accuracy        (GPS too noisy to trust)
 
-    Responses:
-      200 {ok, status, flags, needs_review, face_verified, face_distance, record}
-      400 {detail, reason?}  bad state or no_face
-      403 {detail, reason}   outside_geofence | duplicate_device | face_mismatch
+    Non-blocking (flagged, informational only):
+      - off_campus_network  (soft signal, no action required)
+      - face_missing        (photo not attached but enrollment exists;
+                             only possible with older clients)
     """
 
     def post(self, request, pk):
@@ -459,7 +486,7 @@ class AttendanceSelfCheckInView(APIView):
                                   "another student for this session.",
                         "reason": "duplicate_device",
                     },
-                    status=403,
+                    status=status.HTTP_403_FORBIDDEN,
                 )
 
         # ── Geofence evaluation ────────────────────────────
@@ -468,34 +495,58 @@ class AttendanceSelfCheckInView(APIView):
         geofence_result = "no_geofence"
 
         if session.require_location:
-            geofence_result, distance = evaluate_geofence(
-                student_lat, student_lng, student_accuracy,
-                session.classroom_lat, session.classroom_lng,
-                session.geofence_radius_meters,
-            )
+            # If the classroom has no coordinates set, geofence can't be
+            # enforced — this is a rep config issue, not a student issue.
+            # Skip the check entirely rather than penalize the student.
+            if session.classroom_lat is None or session.classroom_lng is None:
+                geofence_result = "no_geofence"
+                distance = None
+            else:
+                geofence_result, distance = evaluate_geofence(
+                    student_lat, student_lng, student_accuracy,
+                    session.classroom_lat, session.classroom_lng,
+                    session.geofence_radius_meters,
+                )
 
             if geofence_result == "outside":
                 return Response(
                     {
                         "detail": "You appear to be outside the classroom. "
-                                  "If this is wrong, tap 'Request review' "
-                                  "to message your course rep.",
+                                  "If this is wrong, message your course rep.",
                         "reason": "outside_geofence",
                         "distance_meters": (
                             round(distance, 1) if distance else None
                         ),
                         "radius_meters": session.geofence_radius_meters,
                     },
-                    status=403,
+                    status=status.HTTP_403_FORBIDDEN,
                 )
-            if geofence_result == "low_accuracy":
+
+            if geofence_result == "no_gps":
+                # HARD GATE — GPS required by class, device sent none.
+                if student_lat is None or student_lng is None:
+                    return Response(
+                        {
+                            "detail": (
+                                "This class requires location verification. "
+                                "Please enable location services on your "
+                                "device, allow this site to access your "
+                                "location, then try again."
+                            ),
+                            "reason": "no_gps",
+                        },
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                # Defensive: GPS was actually present, treat as uncertain
+                # rather than reject.
+                flags.append("uncertain_geofence")
+            elif geofence_result == "low_accuracy":
                 flags.append("low_accuracy")
             elif geofence_result == "uncertain":
                 flags.append("uncertain_geofence")
-            elif geofence_result == "no_gps":
-                flags.append("no_gps")
+            # 'inside' and 'no_geofence' → no flag
 
-        # ── Face verification ──────────────────────────────
+        # ── Face verification (HARD GATE) ──────────────────
         face_flags = []
         face_distance = None
         face_verified = False
@@ -503,8 +554,21 @@ class AttendanceSelfCheckInView(APIView):
         enrolled_embedding = getattr(request.user, "face_embedding", None)
 
         if not enrolled_embedding:
-            face_flags.append("face_not_enrolled")
-        elif not photo_file:
+            # HARD GATE — no enrollment, no check-in.
+            return Response(
+                {
+                    "detail": (
+                        "You must enroll your face before you can check in "
+                        "to class. Go to Profile → Face verification and "
+                        "enroll your face, then come back here to check in."
+                    ),
+                    "reason": "face_not_enrolled",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not photo_file:
+            # Old clients without face capture still get a chance — flag it.
             face_flags.append("face_missing")
         else:
             try:
@@ -523,7 +587,7 @@ class AttendanceSelfCheckInView(APIView):
                                   "your face centred.",
                         "reason": "no_face",
                     },
-                    status=400,
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
             if not result["ok"]:
                 face_flags.append("face_error")
@@ -533,6 +597,7 @@ class AttendanceSelfCheckInView(APIView):
                 face_verified = True
                 face_flags.append("face_borderline")
             else:
+                # Hard mismatch.
                 return Response(
                     {
                         "detail": "That doesn't match the photo on your "
@@ -543,7 +608,7 @@ class AttendanceSelfCheckInView(APIView):
                         "reason": "face_mismatch",
                         "distance": face_distance,
                     },
-                    status=403,
+                    status=status.HTTP_403_FORBIDDEN,
                 )
 
         # ── IP consistency (soft flag) ─────────────────────
@@ -593,15 +658,20 @@ class AttendanceSelfCheckInView(APIView):
                                   "for this session.",
                         "reason": "duplicate_device",
                     },
-                    status=403,
+                    status=status.HTTP_403_FORBIDDEN,
                 )
 
-        # ── Present vs late ────────────────────────────────
+        # ── Determine present vs late ──────────────────────
         late_threshold = _compute_late_threshold(session)
         new_status = (
             AttendanceRecord.STATUS_LATE
             if late_threshold and now >= late_threshold
             else AttendanceRecord.STATUS_PRESENT
+        )
+
+        # ── Decide review requirement ──────────────────────
+        review_required = any(
+            f in REVIEW_REQUIRED_FLAGS for f in all_flags
         )
 
         # ── Persist ────────────────────────────────────────
@@ -613,7 +683,7 @@ class AttendanceSelfCheckInView(APIView):
         record.check_in_gps_accuracy = student_accuracy
         record.check_in_ip = client_ip
         record.check_in_flags = all_flags
-        record.needs_review = bool(all_flags)
+        record.needs_review = review_required
         record.face_verified = face_verified
         record.face_distance = face_distance
         record.face_flags = face_flags
@@ -641,7 +711,9 @@ class AttendanceSelfCheckInView(APIView):
             "ok": True,
             "status": new_status,
             "flags": all_flags,
-            "needs_review": bool(all_flags),
+            "needs_review": review_required,
+            "review_flags": [f for f in all_flags if f in REVIEW_REQUIRED_FLAGS],
+            "info_flags": [f for f in all_flags if f not in REVIEW_REQUIRED_FLAGS],
             "face_verified": face_verified,
             "face_distance": face_distance,
             "record": AttendanceRecordSerializer(record).data,
@@ -777,6 +849,9 @@ class MyAttendanceView(APIView):
                 active_sessions, many=True
             ).data,
             "records": record_data,
+            # Frontend gates the check-in button on this — a student
+            # without an enrolled face cannot check in.
+            "user_face_enrolled": bool(request.user.face_embedding),
         })
 
 
@@ -1162,69 +1237,3 @@ class AttendanceRecordReviewView(APIView):
         )
 
         return Response(AttendanceRecordSerializer(record).data) 
-
-
-class UpcomingSessionsView(APIView):
-    """
-    Next N classes from the timetable, with computed check-in windows.
-    Does NOT create AttendanceSession rows — informational only.
-    """
-    def get(self, request):
-        from datetime import datetime as _dt, timedelta as _td
-        from django.utils import timezone as _tz
-
-        now = _tz.now()
-        tz = _tz.get_current_timezone()
-        try:
-            lookahead_days = min(int(request.query_params.get('days', 7)), 30)
-            limit = min(int(request.query_params.get('limit', 5)), 20)
-        except (TypeError, ValueError):
-            lookahead_days, limit = 7, 5
-
-        results = []
-        for day_offset in range(lookahead_days + 1):
-            if len(results) >= limit:
-                break
-            check_date = (now + _td(days=day_offset)).date()
-            day_of_week = check_date.weekday()
-
-            entries = TimetableEntry.objects.filter(
-                active=True, day_of_week=day_of_week
-            ).order_by('start_time')
-
-            for entry in entries:
-                if len(results) >= limit:
-                    break
-
-                class_start = _tz.make_aware(
-                    _dt.combine(check_date, entry.start_time), tz
-                )
-                class_end = _tz.make_aware(
-                    _dt.combine(check_date, entry.end_time), tz
-                )
-                opens_at = class_start - _td(
-                    minutes=entry.check_in_starts_minutes_before
-                )
-                closes_at = class_end + _td(
-                    minutes=entry.check_in_ends_minutes_after
-                )
-
-                if closes_at < now:
-                    continue  # already past
-
-                results.append({
-                    'timetable_entry_id': entry.id,
-                    'course_code': entry.course_code,
-                    'course_title': entry.course_title,
-                    'date': str(check_date),
-                    'start_time': entry.start_time.strftime('%H:%M'),
-                    'end_time': entry.end_time.strftime('%H:%M'),
-                    'room': getattr(entry, 'room', None),
-                    'check_in_opens_at': opens_at.isoformat(),
-                    'check_in_closes_at': closes_at.isoformat(),
-                    'opens_in_seconds': max(0, int((opens_at - now).total_seconds())),
-                    'closes_in_seconds': max(0, int((closes_at - now).total_seconds())),
-                    'is_open_now': opens_at <= now < closes_at,
-                })
-
-        return Response({'results': results})        
