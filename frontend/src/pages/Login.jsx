@@ -39,7 +39,8 @@ function safeRedirect(user, location) {
   return from;
 }
 
-// ── Keyframes used by this page (guaranteed to exist) ────────
+// Keyframes for avatar glow and welcome pop (safety net in case they're
+// not in the global CSS)
 const PageKeyframes = () => (
   <style>{`
     @keyframes avatarGlow {
@@ -75,8 +76,9 @@ export default function Login() {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
-  // ── Loading state — with the background visible behind the spinner ──
+  // ── Loading state — background renders behind the spinner ──
   if (loading) {
     return (
       <div
@@ -224,7 +226,9 @@ export default function Login() {
               👋 Welcome
             </p>
 
+            {/* Animated title — cascade + gradient flow + glow */}
             <AnimatedTitle text="CompEng Portal" as="h1" fontSize={26} />
+
             {REP_CAPTION && (
               <p
                 style={{
@@ -273,15 +277,83 @@ export default function Login() {
 
           <label style={LABEL}>
             Class password
-            <input
-              type="password"
-              value={form.password}
-              onChange={set('password')}
-              required
-              autoComplete="current-password"
-              placeholder="Shared class password"
-              style={FIELD}
-            />
+            <div style={{ position: 'relative', marginTop: 4 }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={form.password}
+                onChange={set('password')}
+                required
+                autoComplete="current-password"
+                placeholder="Shared class password"
+                style={{
+                  width: '100%',
+                  paddingRight: 48,
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  right: 8,
+                  transform: 'translateY(-50%)',
+                  width: 34,
+                  height: 34,
+                  borderRadius: 8,
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  display: 'grid',
+                  placeItems: 'center',
+                  color: 'var(--slate-500)',
+                  padding: 0,
+                  transition: 'background 140ms ease, color 140ms ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--slate-100)';
+                  e.currentTarget.style.color = 'var(--slate-700)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.color = 'var(--slate-500)';
+                }}
+              >
+                {showPassword ? (
+                  // eye-off icon
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                    <line x1="1" y1="1" x2="23" y2="23" />
+                  </svg>
+                ) : (
+                  // eye icon
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                )}
+              </button>
+            </div>
           </label>
 
           {err && (
@@ -322,7 +394,7 @@ export default function Login() {
           </p>
         </form>
 
-        {/* ── Footer ─────────────────────────────────────── */}
+        {/* ── Animated footer ─────────────────────────────────── */}
         <AnimatedFooter year={COPYRIGHT_YEAR} name={CREATOR_NAME} />
       </div>
     </div>
