@@ -38,14 +38,13 @@ from .semester import (
 # Flag severity policy
 #
 # Only flags in this set push a check-in into the admin review
-# queue. Other flags (face_not_enrolled, no_gps, off_campus_network,
-# face_error, face_missing) are recorded informationally and do not
-# force a manual approval.
+# queue. Benign flags (face_not_enrolled, no_gps, off_campus_network,
+# face_error, face_missing) are recorded informationally.
 #
 # Note: face_not_enrolled and no_gps are now HARD GATES — those
 # check-ins are rejected outright before this policy is consulted.
-# The flags remain in the set below only so pre-existing records
-# carrying them still display correctly in the admin UI.
+# The flags remain in the set for pre-existing records that still
+# carry them, so the admin UI renders them correctly.
 # ─────────────────────────────────────────────────────────────
 REVIEW_REQUIRED_FLAGS = {
     'face_borderline',
@@ -386,6 +385,7 @@ class AttendanceCloseCheckInView(APIView):
 
 # ─────────────────────────────────────────────────────────────
 # Self check-in — GPS + device fingerprint + face verification
+# with hard gates
 # ─────────────────────────────────────────────────────────────
 class AttendanceSelfCheckInView(APIView):
     """
@@ -400,14 +400,13 @@ class AttendanceSelfCheckInView(APIView):
     4. Geofence OUTSIDE rejected with 403 outside_geofence.
 
     Non-blocking (flagged, review-required):
-      - face_borderline     (weak face match, needs human decision)
-      - uncertain_geofence  (at the boundary of the geofence)
-      - low_accuracy        (GPS too noisy to trust)
+      - face_borderline
+      - uncertain_geofence
+      - low_accuracy
 
     Non-blocking (flagged, informational only):
-      - off_campus_network  (soft signal, no action required)
-      - face_missing        (photo not attached but enrollment exists;
-                             only possible with older clients)
+      - off_campus_network
+      - face_missing
     """
 
     def post(self, request, pk):
@@ -495,9 +494,9 @@ class AttendanceSelfCheckInView(APIView):
         geofence_result = "no_geofence"
 
         if session.require_location:
-            # If the classroom has no coordinates set, geofence can't be
-            # enforced — this is a rep config issue, not a student issue.
-            # Skip the check entirely rather than penalize the student.
+            # If the classroom has no coordinates set, geofence can't
+            # be enforced — this is a rep config issue, not the
+            # student's problem. Skip the check entirely.
             if session.classroom_lat is None or session.classroom_lng is None:
                 geofence_result = "no_geofence"
                 distance = None
@@ -537,8 +536,7 @@ class AttendanceSelfCheckInView(APIView):
                         },
                         status=status.HTTP_403_FORBIDDEN,
                     )
-                # Defensive: GPS was actually present, treat as uncertain
-                # rather than reject.
+                # Defensive: GPS was present. Treat as uncertain.
                 flags.append("uncertain_geofence")
             elif geofence_result == "low_accuracy":
                 flags.append("low_accuracy")
@@ -568,7 +566,7 @@ class AttendanceSelfCheckInView(APIView):
             )
 
         if not photo_file:
-            # Old clients without face capture still get a chance — flag it.
+            # Old clients without face capture — flag it.
             face_flags.append("face_missing")
         else:
             try:
@@ -597,7 +595,6 @@ class AttendanceSelfCheckInView(APIView):
                 face_verified = True
                 face_flags.append("face_borderline")
             else:
-                # Hard mismatch.
                 return Response(
                     {
                         "detail": "That doesn't match the photo on your "
@@ -853,6 +850,74 @@ class MyAttendanceView(APIView):
             # without an enrolled face cannot check in.
             "user_face_enrolled": bool(request.user.face_embedding),
         })
+
+
+# ─────────────────────────────────────────────────────────────
+# Upcoming sessions from timetable — informational only
+# ─────────────────────────────────────────────────────────────
+class UpcomingSessionsView(APIView):
+    """
+    Next N classes from the timetable, with computed check-in windows.
+    Does NOT create AttendanceSession rows — purely informational for
+    the 'Coming up' panel on /attendance and for the reminder toast.
+    """
+
+    def get(self, request):
+        now = timezone.now()
+        tz = timezone.get_current_timezone()
+        try:
+            lookahead_days = min(int(request.query_params.get('days', 7)), 30)
+            limit = min(int(request.query_params.get('limit', 5)), 20)
+        except (TypeError, ValueError):
+            lookahead_days, limit = 7, 5
+
+        results = []
+        for day_offset in range(lookahead_days + 1):
+            if len(results) >= limit:
+                break
+            check_date = (now + timedelta(days=day_offset)).date()
+            day_of_week = check_date.weekday()
+
+            entries = TimetableEntry.objects.filter(
+                active=True, day_of_week=day_of_week
+            ).order_by('start_time')
+
+            for entry in entries:
+                if len(results) >= limit:
+                    break
+
+                class_start = timezone.make_aware(
+                    datetime.combine(check_date, entry.start_time), tz
+                )
+                class_end = timezone.make_aware(
+                    datetime.combine(check_date, entry.end_time), tz
+                )
+                opens_at = class_start - timedelta(
+                    minutes=entry.check_in_starts_minutes_before
+                )
+                closes_at = class_end + timedelta(
+                    minutes=entry.check_in_ends_minutes_after
+                )
+
+                if closes_at < now:
+                    continue
+
+                results.append({
+                    'timetable_entry_id': entry.id,
+                    'course_code': entry.course_code,
+                    'course_title': entry.course_title,
+                    'date': str(check_date),
+                    'start_time': entry.start_time.strftime('%H:%M'),
+                    'end_time': entry.end_time.strftime('%H:%M'),
+                    'room': getattr(entry, 'room', None),
+                    'check_in_opens_at': opens_at.isoformat(),
+                    'check_in_closes_at': closes_at.isoformat(),
+                    'opens_in_seconds': max(0, int((opens_at - now).total_seconds())),
+                    'closes_in_seconds': max(0, int((closes_at - now).total_seconds())),
+                    'is_open_now': opens_at <= now < closes_at,
+                })
+
+        return Response({'results': results})
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1237,73 +1302,3 @@ class AttendanceRecordReviewView(APIView):
         )
 
         return Response(AttendanceRecordSerializer(record).data) 
-    
-# ─────────────────────────────────────────────────────────────
-# Upcoming sessions from timetable — informational only
-# ─────────────────────────────────────────────────────────────
-class UpcomingSessionsView(APIView):
-    """
-    Next N classes from the timetable, with computed check-in windows.
-    Does NOT create AttendanceSession rows — purely informational for
-    the 'Coming up' panel on /attendance.
-    """
-
-    def get(self, request):
-        from datetime import datetime as _dt, timedelta as _td
-        from django.utils import timezone as _tz
-
-        now = _tz.now()
-        tz = _tz.get_current_timezone()
-        try:
-            lookahead_days = min(int(request.query_params.get('days', 7)), 30)
-            limit = min(int(request.query_params.get('limit', 5)), 20)
-        except (TypeError, ValueError):
-            lookahead_days, limit = 7, 5
-
-        results = []
-        for day_offset in range(lookahead_days + 1):
-            if len(results) >= limit:
-                break
-            check_date = (now + _td(days=day_offset)).date()
-            day_of_week = check_date.weekday()
-
-            entries = TimetableEntry.objects.filter(
-                active=True, day_of_week=day_of_week
-            ).order_by('start_time')
-
-            for entry in entries:
-                if len(results) >= limit:
-                    break
-
-                class_start = _tz.make_aware(
-                    _dt.combine(check_date, entry.start_time), tz
-                )
-                class_end = _tz.make_aware(
-                    _dt.combine(check_date, entry.end_time), tz
-                )
-                opens_at = class_start - _td(
-                    minutes=entry.check_in_starts_minutes_before
-                )
-                closes_at = class_end + _td(
-                    minutes=entry.check_in_ends_minutes_after
-                )
-
-                if closes_at < now:
-                    continue
-
-                results.append({
-                    'timetable_entry_id': entry.id,
-                    'course_code': entry.course_code,
-                    'course_title': entry.course_title,
-                    'date': str(check_date),
-                    'start_time': entry.start_time.strftime('%H:%M'),
-                    'end_time': entry.end_time.strftime('%H:%M'),
-                    'room': getattr(entry, 'room', None),
-                    'check_in_opens_at': opens_at.isoformat(),
-                    'check_in_closes_at': closes_at.isoformat(),
-                    'opens_in_seconds': max(0, int((opens_at - now).total_seconds())),
-                    'closes_in_seconds': max(0, int((closes_at - now).total_seconds())),
-                    'is_open_now': opens_at <= now < closes_at,
-                })
-
-        return Response({'results': results})    
